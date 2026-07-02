@@ -16,6 +16,7 @@ import androidx.core.content.ContextCompat
 import android.content.pm.PackageManager
 import android.os.Environment
 import android.os.Build
+import androidx.activity.OnBackPressedCallback
 import java.io.File
 import java.io.FileOutputStream
 
@@ -80,6 +81,20 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.addJavascriptInterface(WebViewBridge(), "AndroidBridge")
+
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (webView.canGoBack()) {
+                    webView.goBack()
+                } else {
+                    webView.evaluateJavascript("window.goBack()", { result ->
+                        if (result == "null" || result == "\"no_back\"") {
+                            finish()
+                        }
+                    })
+                }
+            }
+        })
 
         webView.loadUrl("file:///android_asset/index.html")
     }
@@ -227,18 +242,6 @@ class MainActivity : AppCompatActivity() {
                 android.Manifest.permission.WRITE_EXTERNAL_STORAGE
             )
             ActivityCompat.requestPermissions(this, perms, PERMISSION_REQUEST)
-        }
-    }
-
-    override fun onBackPressed() {
-        if (webView.canGoBack()) {
-            webView.goBack()
-        } else {
-            webView.evaluateJavascript("window.goBack()", { result ->
-                if (result == "null" || result == "\"no_back\"") {
-                    super.onBackPressed()
-                }
-            })
         }
     }
 

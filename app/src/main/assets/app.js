@@ -674,6 +674,19 @@
     // Go back
     function goBack() {
         if (definitionArea.querySelector('.def-content')) {
+            clearSearch();
+            definitionArea.innerHTML = `
+                <div class="welcome-msg">
+                    <div class="welcome-icon">📖</div>
+                    <h2>MDict 词典</h2>
+                    <p>请先导入词典文件 (.mdx)</p>
+                    <button id="btn-import-welcome" class="btn-primary">导入词典</button>
+                </div>`;
+            document.getElementById('btn-import-welcome')?.addEventListener('click', () => pickFile('application/octet-stream,.mdx'));
+            return 'handled';
+        }
+        const activeTab = document.querySelector('.nav-item.active');
+        if (activeTab && activeTab.dataset.tab !== 'search') {
             switchTab('search');
             return 'handled';
         }
