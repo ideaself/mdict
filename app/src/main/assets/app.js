@@ -330,6 +330,17 @@
 
     function loadDict(dictId) {
         if (window._dictParsers && window._dictParsers[dictId]) {
+            // Parser exists in memory, just need to set it as current
+            // But we must re-set the buffer because js-mdict uses global scanner
+            const dictInfo = allDicts.find(d => d.id === dictId);
+            if (dictInfo && dictInfo.internalPath && window.AndroidBridge) {
+                const base64 = window.AndroidBridge.readLocalFile(dictInfo.internalPath);
+                if (base64) {
+                    MDictLib.setBuffer(base64ToArrayBuffer(base64));
+                    // Re-create parser with fresh buffer
+                    window._dictParsers[dictId] = new MDictLib.MDX('dummy');
+                }
+            }
             currentDict = window._dictParsers[dictId];
             currentDictName = dictId;
             return;
@@ -338,31 +349,20 @@
         const dictInfo = allDicts.find(d => d.id === dictId);
         if (!dictInfo) return;
 
-        // Try to load from internal storage using saved path
+        // Load from internal storage
         if (dictInfo.internalPath && window.AndroidBridge) {
             const base64 = window.AndroidBridge.readLocalFile(dictInfo.internalPath);
             if (base64) {
-                showImportStatus('import-status', 'loading', '正在重新加载词典...');
-                // Reload in background
-                setTimeout(() => {
-                    try {
-                        MDictLib.setBuffer(base64ToArrayBuffer(base64));
-                        const parser = new MDictLib.MDX('dummy');
-                        window._dictParsers = window._dictParsers || {};
-                        window._dictParsers[dictId] = parser;
-                        currentDict = parser;
-                        currentDictName = dictId;
-                        showImportStatus('import-status', 'success', `已加载: ${dictInfo.name}`);
-                    } catch(e) {
-                        console.error('Reload error:', e);
-                        showImportStatus('import-status', 'error', '重新加载失败，请重新导入');
-                    }
-                }, 50);
+                MDictLib.setBuffer(base64ToArrayBuffer(base64));
+                const parser = new MDictLib.MDX('dummy');
+                window._dictParsers = window._dictParsers || {};
+                window._dictParsers[dictId] = parser;
+                currentDict = parser;
+                currentDictName = dictId;
                 return;
             }
         }
 
-        // Show message to re-import
         definitionArea.innerHTML = `
             <div class="no-result">
                 <div class="emoji">⚠️</div>
