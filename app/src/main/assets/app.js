@@ -128,19 +128,33 @@
     function onFilesPicked(uris) {
         uris.forEach(uri => {
             const fileName = window.AndroidBridge?.getFileName(uri) || 'unknown.mdx';
-            const base64 = window.AndroidBridge?.readFileAsBase64(uri) || '';
 
+            if (fileName.endsWith('.css')) {
+                const base64 = window.AndroidBridge?.readFileAsBase64(uri) || '';
+                if (base64) processCSSFile(fileName, base64);
+                return;
+            }
+
+            if (!fileName.endsWith('.mdx')) {
+                showImportStatus('import-status', 'error', '仅支持 .mdx 文件');
+                return;
+            }
+
+            // Save to internal storage first
+            showImportStatus('import-status', 'loading', '正在保存词典...');
+            let internalPath = '';
+            if (window.AndroidBridge) {
+                internalPath = window.AndroidBridge.saveFileToInternal(uri, fileName) || '';
+            }
+
+            const base64 = window.AndroidBridge?.readFileAsBase64(uri) || '';
             if (base64) {
-                if (fileName.endsWith('.css')) {
-                    processCSSFile(fileName, base64);
-                } else {
-                    processFile(fileName, base64);
-                }
+                processFile(fileName, base64, internalPath);
             }
         });
     }
 
-    function processFile(fileName, base64Data) {
+    function processFile(fileName, base64Data, internalPath) {
         if (fileName.endsWith('.css')) {
             processCSSFile(fileName, base64Data);
             return;
@@ -183,7 +197,8 @@
                     fileName: fileName,
                     keywordCount: info.keywordCount,
                     version: info.version,
-                    encoding: info.encoding
+                    encoding: info.encoding,
+                    internalPath: internalPath || ''
                 };
 
                 allDicts = allDicts.filter(d => d.id !== dictId);
@@ -320,22 +335,30 @@
             return;
         }
 
-        // Need to reload from file
         const dictInfo = allDicts.find(d => d.id === dictId);
         if (!dictInfo) return;
 
-        // Try to load from internal storage
-        if (window.AndroidBridge) {
-            const filePath = window.AndroidBridge.saveFileToInternal(
-                'content://dummy',
-                dictInfo.fileName
-            );
-            if (filePath) {
-                const base64 = window.AndroidBridge.readLocalFile(filePath);
-                if (base64) {
-                    processFile(dictInfo.fileName, base64);
-                    return;
-                }
+        // Try to load from internal storage using saved path
+        if (dictInfo.internalPath && window.AndroidBridge) {
+            const base64 = window.AndroidBridge.readLocalFile(dictInfo.internalPath);
+            if (base64) {
+                showImportStatus('import-status', 'loading', '正在重新加载词典...');
+                // Reload in background
+                setTimeout(() => {
+                    try {
+                        MDictLib.setBuffer(base64ToArrayBuffer(base64));
+                        const parser = new MDictLib.MDX('dummy');
+                        window._dictParsers = window._dictParsers || {};
+                        window._dictParsers[dictId] = parser;
+                        currentDict = parser;
+                        currentDictName = dictId;
+                        showImportStatus('import-status', 'success', `已加载: ${dictInfo.name}`);
+                    } catch(e) {
+                        console.error('Reload error:', e);
+                        showImportStatus('import-status', 'error', '重新加载失败，请重新导入');
+                    }
+                }, 50);
+                return;
             }
         }
 
@@ -346,6 +369,15 @@
                 <p>需要重新导入词典文件</p>
                 <button class="btn-primary" onclick="window.pickFileForImport()" style="margin-top:12px">导入词典</button>
             </div>`;
+    }
+
+    function base64ToArrayBuffer(base64) {
+        const binaryStr = atob(base64);
+        const bytes = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) {
+            bytes[i] = binaryStr.charCodeAt(i);
+        }
+        return bytes.buffer;
     }
 
     window.pickFileForImport = function() {
@@ -670,9 +702,7 @@
         return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
     }
 
-    // Apply custom CSS on load
-    applyCustomCSS();
-
     // Start
     init();
+    applyCustomCSS();
 })();
