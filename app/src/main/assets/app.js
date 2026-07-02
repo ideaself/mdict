@@ -19,7 +19,6 @@
     const btnSearch = document.getElementById('btn-search');
     const btnClear = document.getElementById('btn-clear');
     const dictSelect = document.getElementById('dict-select');
-    const btnImport = document.getElementById('btn-import');
     const suggestionList = document.getElementById('suggestion-list');
     const definitionArea = document.getElementById('definition-area');
 
@@ -70,7 +69,6 @@
 
         // Dict selector
         dictSelect.addEventListener('change', onDictChange);
-        btnImport.addEventListener('click', () => pickFile('application/octet-stream,.mdx'));
 
         // Welcome import button
         document.getElementById('btn-import-welcome')?.addEventListener('click', () => pickFile('application/octet-stream,.mdx'));
@@ -541,6 +539,18 @@
         searchInput.focus();
     }
 
+    window.searchFromList = function(word, dictId) {
+        // Switch to search tab
+        switchTab('search');
+        // Load the correct dictionary if needed
+        if (dictId && dictSelect.value !== dictId) {
+            dictSelect.value = dictId;
+            loadDict(dictId);
+        }
+        // Search the word
+        searchWord(word);
+    };
+
     // History
     function addToHistory(word) {
         // Remove if exists
@@ -568,7 +578,7 @@
         }
 
         list.innerHTML = searchHistory.map(item => `
-            <div class="word-item" onclick="window.searchWord('${escapeHtml(item.word)}')">
+            <div class="word-item" onclick="window.searchFromList('${escapeHtml(item.word)}', '${escapeHtml(item.dictId || '')}')">
                 <div>
                     <div class="word-item-text">${escapeHtml(item.word)}</div>
                     <div class="word-item-time">${formatTime(item.time)}</div>
@@ -630,7 +640,7 @@
         }
 
         list.innerHTML = favorites.map(item => `
-            <div class="word-item" onclick="window.searchWord('${escapeHtml(item.word)}')">
+            <div class="word-item" onclick="window.searchFromList('${escapeHtml(item.word)}', '${escapeHtml(item.dictId || '')}')">
                 <div>
                     <div class="word-item-text">${escapeHtml(item.word)}</div>
                     <div class="word-item-time">${formatTime(item.time)}</div>

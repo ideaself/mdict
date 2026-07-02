@@ -97,7 +97,6 @@ html, body {
     padding: 6px 12px;
     background: var(--surface);
     border-bottom: 1px solid var(--divider);
-    gap: 8px;
 }
 
 .dict-selector select {
@@ -109,6 +108,9 @@ html, body {
     font-size: 14px;
     background: var(--bg);
     outline: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .btn-small {
