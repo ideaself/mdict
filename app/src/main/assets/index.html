@@ -33,7 +33,10 @@
         <div id="tab-learn" class="tab-content">
             <div class="learn-header">
                 <span id="learn-book-title" class="learn-book-title" onclick="window.showBookPicker()">请选择词书 ▾</span>
-                <span id="learn-progress-text" class="learn-progress-text"></span>
+                <div class="learn-mode-switch">
+                    <button class="mode-btn active" data-mode="learn" onclick="window.switchLearnMode('learn')">学习</button>
+                    <button class="mode-btn" data-mode="review" onclick="window.switchLearnMode('review')">复习</button>
+                </div>
             </div>
             <div class="learn-stats">
                 <span class="stat-item stat-new" data-list="new">新词: <b id="stat-new">0</b></span>
@@ -60,15 +63,26 @@
                     </div>
                 </div>
             </div>
-            <div class="learn-actions">
+            <!-- Learn actions -->
+            <div class="learn-actions" id="learn-actions">
                 <button class="btn-learn-action btn-unknown" onclick="window.learnMark(false)">不认识</button>
                 <button class="btn-learn-action btn-known" onclick="window.learnMark(true)">认识</button>
             </div>
+            <!-- Review actions -->
+            <div class="review-actions hidden" id="review-actions">
+                <button class="btn-review-action btn-again" onclick="window.reviewMark(0)">重来</button>
+                <button class="btn-review-action btn-hard" onclick="window.reviewMark(1)">困难</button>
+                <button class="btn-review-action btn-good" onclick="window.reviewMark(2)">良好</button>
+                <button class="btn-review-action btn-easy" onclick="window.reviewMark(3)">简单</button>
+            </div>
             <div id="learn-done-view" class="learn-done-view hidden">
                 <div class="learn-done-icon">🎉</div>
-                <h3>今日学习完成！</h3>
+                <h3 id="learn-done-title">今日学习完成！</h3>
                 <p id="learn-done-stats"></p>
-                <button class="btn-primary" onclick="window.learnReset()">再学一轮</button>
+                <div id="learn-done-next" class="learn-done-next hidden">
+                    <p id="learn-done-next-text"></p>
+                </div>
+                <button class="btn-primary" id="learn-done-btn" onclick="window.learnReset()">再学一轮</button>
             </div>
             <!-- Book Picker Popup -->
             <div id="book-picker-popup" class="book-picker-popup hidden">

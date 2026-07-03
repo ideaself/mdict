@@ -732,6 +732,10 @@
     let learnIndex = 0;
     let learnFlipped = false;
     let learnStats = { new: 0, known: 0, unknown: 0 };
+    let learnMode = 'learn'; // 'learn' or 'review'
+    let srsData = {}; // { wordName: { easeFactor, interval, nextReview, reviewCount } }
+    let reviewQueue = [];
+    let reviewDoneCount = 0;
 
     function initLearnBooks() {
         const lastBook = localStorage.getItem('learn_last_book');
@@ -742,6 +746,168 @@
             document.getElementById('learn-phonetic').textContent = '点击左上角选择';
         }
     }
+
+    // Mode switching
+    window.switchLearnMode = function(mode) {
+        if (!learnCurrentBook) return;
+        learnMode = mode;
+        document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+        if (mode === 'review') {
+            startReview();
+        } else {
+            showLearnCard();
+        }
+    };
+
+    // SRS functions
+    function initSrsData(bookName) {
+        const progress = loadLearnProgress(bookName);
+        if (!progress.srs) {
+            progress.srs = {};
+            // Initialize SRS for all words
+            learnWords.forEach(w => {
+                if (!progress.srs[w.name]) {
+                    progress.srs[w.name] = { easeFactor: 2.5, interval: 0, nextReview: 0, reviewCount: 0 };
+                }
+            });
+            localStorage.setItem(getLearnStorageKey(bookName), JSON.stringify(progress));
+        }
+        srsData = progress.srs;
+        // Ensure all words have SRS entry
+        learnWords.forEach(w => {
+            if (!srsData[w.name]) {
+                srsData[w.name] = { easeFactor: 2.5, interval: 0, nextReview: 0, reviewCount: 0 };
+            }
+        });
+    }
+
+    function startReview() {
+        const now = Date.now();
+        reviewQueue = [];
+        reviewDoneCount = 0;
+        // Get words that need review (nextReview <= now)
+        learnWords.forEach(w => {
+            const srs = srsData[w.name];
+            if (srs && srs.nextReview <= now) {
+                reviewQueue.push(w);
+            }
+        });
+        // Sort by nextReview ascending (oldest first)
+        reviewQueue.sort((a, b) => (srsData[a.name]?.nextReview || 0) - (srsData[b.name]?.nextReview || 0));
+        showReviewCard();
+    }
+
+    function showReviewCard() {
+        const cardArea = document.getElementById('learn-card-area');
+        const reviewActions = document.getElementById('review-actions');
+        const learnActions = document.getElementById('learn-actions');
+        const doneView = document.getElementById('learn-done-view');
+
+        document.getElementById('learn-actions').classList.add('hidden');
+        document.getElementById('review-actions').classList.remove('hidden');
+
+        if (reviewQueue.length === 0) {
+            doneView.classList.remove('hidden');
+            cardArea.classList.add('hidden');
+            reviewActions.classList.add('hidden');
+            document.getElementById('learn-done-title').textContent = '今日复习完成！';
+            document.getElementById('learn-done-stats').textContent = `已复习 ${reviewDoneCount} 个单词`;
+            document.getElementById('learn-done-next').classList.remove('hidden');
+            // Find next review time
+            const nextTime = findNextReviewTime();
+            document.getElementById('learn-done-next-text').textContent = nextTime;
+            document.getElementById('learn-done-btn').textContent = '返回学习';
+            document.getElementById('learn-done-btn').onclick = function() { window.switchLearnMode('learn'); };
+            return;
+        }
+
+        doneView.classList.add('hidden');
+        cardArea.classList.remove('hidden');
+        reviewActions.classList.remove('hidden');
+
+        const word = reviewQueue[0];
+        document.getElementById('learn-word').textContent = word.name;
+        document.getElementById('learn-phonetic').textContent =
+            (word.ukphone ? '/' + word.ukphone + '/' : '') +
+            (word.usphone && word.usphone !== word.ukphone ? '  /' + word.usphone + '/' : '');
+        document.getElementById('learn-word-back').textContent = word.name;
+        document.getElementById('learn-trans').innerHTML =
+            (word.trans || []).map(t => escapeHtml(t)).join('<br>');
+
+        learnFlipped = false;
+        document.querySelector('.learn-card-front').classList.remove('hidden');
+        document.querySelector('.learn-card-back').classList.add('hidden');
+
+        // Update progress text
+        const total = reviewQueue.length + reviewDoneCount;
+        document.getElementById('learn-progress-text').textContent =
+            `剩余 ${reviewQueue.length} / 已完成 ${reviewDoneCount}`;
+    }
+
+    function findNextReviewTime() {
+        const now = Date.now();
+        let earliest = Infinity;
+        learnWords.forEach(w => {
+            const srs = srsData[w.name];
+            if (srs && srs.nextReview > now && srs.nextReview < earliest) {
+                earliest = srs.nextReview;
+            }
+        });
+        if (earliest === Infinity) return '暂无待复习单词';
+        const diff = earliest - now;
+        if (diff < 3600000) return `${Math.ceil(diff / 60000)} 分钟后可复习`;
+        if (diff < 86400000) return `${Math.ceil(diff / 3600000)} 小时后可复习`;
+        return `${Math.ceil(diff / 86400000)} 天后可复习`;
+    }
+
+    function calculateNextReview(word, quality) {
+        const srs = srsData[word.name] || { easeFactor: 2.5, interval: 0, nextReview: 0, reviewCount: 0 };
+        const now = Date.now();
+        const DAY = 86400000;
+
+        if (quality === 0) {
+            // Again: reset
+            srs.interval = 1;
+            srs.easeFactor = Math.max(1.3, srs.easeFactor - 0.2);
+            srs.nextReview = now + DAY; // review tomorrow
+        } else if (quality === 1) {
+            // Hard
+            if (srs.interval === 0) srs.interval = 1;
+            else srs.interval = Math.ceil(srs.interval * 1.2);
+            srs.easeFactor = Math.max(1.3, srs.easeFactor - 0.15);
+            srs.nextReview = now + srs.interval * DAY;
+        } else if (quality === 2) {
+            // Good
+            if (srs.interval === 0) srs.interval = 1;
+            else srs.interval = Math.ceil(srs.interval * srs.easeFactor);
+            srs.nextReview = now + srs.interval * DAY;
+        } else {
+            // Easy
+            if (srs.interval === 0) srs.interval = 4;
+            else srs.interval = Math.ceil(srs.interval * srs.easeFactor * 1.3);
+            srs.easeFactor += 0.15;
+            srs.nextReview = now + srs.interval * DAY;
+        }
+
+        srs.reviewCount++;
+        srsData[word.name] = srs;
+    }
+
+    window.reviewMark = function(quality) {
+        if (reviewQueue.length === 0) return;
+        const word = reviewQueue.shift();
+        calculateNextReview(word, quality);
+
+        // If "Again", put back at end of queue
+        if (quality === 0) {
+            reviewQueue.push(word);
+        } else {
+            reviewDoneCount++;
+        }
+
+        saveLearnProgress();
+        showReviewCard();
+    };
 
     window.showBookPicker = function() {
         const popup = document.getElementById('book-picker-popup');
@@ -851,7 +1017,12 @@
             else { learnStats.new++; }
         }
 
+        initSrsData(bookName);
         shuffleNewWords();
+        learnMode = 'learn';
+        document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === 'learn'));
+        document.getElementById('learn-actions').classList.remove('hidden');
+        document.getElementById('review-actions').classList.add('hidden');
         showLearnCard();
     }
 
@@ -882,7 +1053,8 @@
     function showLearnCard() {
         const doneView = document.getElementById('learn-done-view');
         const cardArea = document.getElementById('learn-card-area');
-        const actions = document.querySelector('.learn-actions');
+        const learnActions = document.getElementById('learn-actions');
+        const reviewActions = document.getElementById('review-actions');
 
         document.getElementById('stat-new').textContent = learnStats.new;
         document.getElementById('stat-known').textContent = learnStats.known;
@@ -897,16 +1069,22 @@
         if (remaining.length === 0) {
             doneView.classList.remove('hidden');
             cardArea.classList.add('hidden');
-            actions.classList.add('hidden');
+            learnActions.classList.add('hidden');
+            reviewActions.classList.add('hidden');
+            document.getElementById('learn-done-title').textContent = '今日学习完成！';
             document.getElementById('learn-done-stats').textContent =
                 `掌握 ${learnStats.known} 词，待复习 ${learnStats.unknown} 词`;
+            document.getElementById('learn-done-next').classList.add('hidden');
+            document.getElementById('learn-done-btn').textContent = '再学一轮';
+            document.getElementById('learn-done-btn').onclick = function() { window.learnReset(); };
             saveLearnProgress();
             return;
         }
 
         doneView.classList.add('hidden');
         cardArea.classList.remove('hidden');
-        actions.classList.remove('hidden');
+        learnActions.classList.remove('hidden');
+        reviewActions.classList.add('hidden');
 
         while (learnIndex < learnWords.length && learnWords[learnIndex]._status) learnIndex++;
         if (learnIndex >= learnWords.length) {
@@ -915,7 +1093,8 @@
             if (learnIndex >= learnWords.length) {
                 doneView.classList.remove('hidden');
                 cardArea.classList.add('hidden');
-                actions.classList.add('hidden');
+                learnActions.classList.add('hidden');
+                reviewActions.classList.add('hidden');
                 saveLearnProgress();
                 return;
             }
@@ -972,6 +1151,13 @@
             learnStats.new++;
         });
         shuffleNewWords();
+        learnMode = 'learn';
+        document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === 'learn'));
+        document.getElementById('learn-actions').classList.remove('hidden');
+        document.getElementById('review-actions').classList.add('hidden');
+        document.getElementById('learn-done-next').classList.add('hidden');
+        document.getElementById('learn-done-btn').textContent = '再学一轮';
+        document.getElementById('learn-done-btn').onclick = function() { window.learnReset(); };
         showLearnCard();
     };
 
@@ -989,7 +1175,7 @@
             if (w._status === 'known') known.push(w.name);
             else if (w._status === 'unknown') unknown.push(w.name);
         });
-        localStorage.setItem(getLearnStorageKey(learnCurrentBook), JSON.stringify({ known, unknown }));
+        localStorage.setItem(getLearnStorageKey(learnCurrentBook), JSON.stringify({ known, unknown, srs: srsData }));
     }
 
     // Word List Panel

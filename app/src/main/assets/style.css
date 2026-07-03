@@ -607,6 +607,33 @@ html, body {
     border-bottom: 1px solid var(--divider);
 }
 
+.learn-mode-switch {
+    display: flex;
+    gap: 0;
+    border: 1px solid var(--divider);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.mode-btn {
+    padding: 4px 14px;
+    border: none;
+    background: var(--surface);
+    font-size: 13px;
+    cursor: pointer;
+    color: var(--text-secondary);
+    transition: all 0.2s;
+}
+
+.mode-btn.active {
+    background: var(--primary);
+    color: white;
+}
+
+.mode-btn:not(:last-child) {
+    border-right: 1px solid var(--divider);
+}
+
 .btn-learn-back {
     border: none;
     background: none;
@@ -822,6 +849,64 @@ html, body {
 .btn-known {
     background: #E8F5E9;
     color: var(--success);
+}
+
+/* Review Actions */
+.review-actions {
+    display: flex;
+    gap: 8px;
+    padding: 16px 16px;
+    padding-bottom: calc(var(--nav-height) + 16px);
+}
+
+.btn-review-action {
+    flex: 1;
+    padding: 12px 0;
+    border: none;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.2s;
+}
+
+.btn-review-action:active { opacity: 0.8; }
+
+.btn-again {
+    background: #FFEBEE;
+    color: var(--danger);
+}
+
+.btn-hard {
+    background: #FFF3E0;
+    color: #E65100;
+}
+
+.btn-good {
+    background: #E8F5E9;
+    color: var(--success);
+}
+
+.btn-easy {
+    background: #E3F2FD;
+    color: #1565C0;
+}
+
+.review-next-hint {
+    font-size: 11px;
+    color: var(--text-secondary);
+    text-align: center;
+    margin-top: 2px;
+}
+
+.learn-done-next {
+    margin-bottom: 16px;
+}
+
+.learn-done-next p {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin-bottom: 0;
 }
 
 .learn-done-view {
