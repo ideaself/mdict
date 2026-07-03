@@ -191,6 +191,16 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
+        fun readAssetFile(path: String): String {
+            return try {
+                assets.open(path).bufferedReader().use { it.readText() }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error reading asset file $path: ${e.message}")
+                ""
+            }
+        }
+
+        @JavascriptInterface
         fun log(message: String) {
             Log.d(TAG, message)
         }

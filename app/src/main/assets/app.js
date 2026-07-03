@@ -919,21 +919,38 @@
         const searchEl = document.getElementById('learn-search-book');
         listEl.innerHTML = '<div class="loading">加载词书列表...</div>';
 
-        // Use async fetch instead of bridge
-        fetch('dicts/index.json').then(r => r.json()).then(files => {
+        function onBookListLoaded(files) {
             learnBookList = files;
             renderLearnBookList(learnBookList);
-        }).catch(() => {
-            // Fallback: use bridge
-            if (window.AndroidBridge && window.AndroidBridge.listDictJsonFiles) {
-                try {
-                    const json = window.AndroidBridge.listDictJsonFiles();
-                    learnBookList = JSON.parse(json);
-                    renderLearnBookList(learnBookList);
-                } catch (e) {
-                    listEl.innerHTML = '<div class="empty-msg">加载失败</div>';
+        }
+
+        function onBookListError() {
+            listEl.innerHTML = '<div class="empty-msg">加载失败</div>';
+        }
+
+        // Try bridge first (most reliable on Android), then fetch
+        if (window.AndroidBridge && window.AndroidBridge.readAssetFile) {
+            try {
+                const json = window.AndroidBridge.readAssetFile('dicts/index.json');
+                if (json) {
+                    onBookListLoaded(JSON.parse(json));
+                    searchEl.oninput = () => {
+                        const q = searchEl.value.trim().toLowerCase();
+                        const filtered = learnBookList.filter(b => b.toLowerCase().includes(q));
+                        renderLearnBookList(filtered);
+                    };
+                    return;
                 }
+            } catch (e) {
+                console.error('Bridge load failed:', e);
             }
+        }
+
+        // Fallback: fetch
+        fetch('dicts/index.json').then(r => r.json()).then(files => {
+            onBookListLoaded(files);
+        }).catch(() => {
+            onBookListError();
         });
 
         searchEl.oninput = () => {
@@ -946,22 +963,6 @@
     window.hideBookPicker = function() {
         document.getElementById('book-picker-popup').classList.add('hidden');
     };
-
-    function renderLearnBookList(books) {
-        const listEl = document.getElementById('learn-book-list');
-        const countEl = document.getElementById('learn-book-count');
-        countEl.textContent = books.length;
-        listEl.innerHTML = books.map(name => `
-            <div class="learn-book-item" data-book="${name}">
-                <span class="learn-book-name">${escapeHtml(name)}</span>
-            </div>
-        `).join('');
-        listEl.querySelectorAll('.learn-book-item').forEach(item => {
-            item.addEventListener('click', () => {
-                window.learnSelectBook(item.dataset.book);
-            });
-        });
-    }
 
     function loadLearnBook(bookName) {
         learnCurrentBook = bookName;
@@ -983,8 +984,21 @@
         setTimeout(() => {
             try {
                 let text = '';
-                if (window.AndroidBridge && window.AndroidBridge.readDictJson) {
-                    text = window.AndroidBridge.readDictJson(bookName);
+                if (window.AndroidBridge && window.AndroidBridge.readAssetFile) {
+                    text = window.AndroidBridge.readAssetFile('dicts/' + bookName + '.json');
+                }
+                if (!text) {
+                    // Fallback: fetch
+                    fetch('dicts/' + bookName + '.json').then(r => r.text()).then(t => {
+                        if (t) {
+                            processLearnWords(bookName, JSON.parse(t));
+                        } else {
+                            document.getElementById('learn-word').textContent = '加载失败';
+                        }
+                    }).catch(() => {
+                        document.getElementById('learn-word').textContent = '加载失败';
+                    });
+                    return;
                 }
                 if (text) {
                     processLearnWords(bookName, JSON.parse(text));
