@@ -101,6 +101,12 @@
             if (e.target.closest('a') || e.target.closest('button') || e.target.closest('.suggestion-item')) return;
             searchInput.focus();
         });
+
+        // Word list panel
+        document.querySelectorAll('.stat-item[data-list]').forEach(el => {
+            el.addEventListener('click', () => window.toggleWordList(el.dataset.list));
+        });
+        document.querySelector('.btn-close-list')?.addEventListener('click', () => window.closeWordList());
     }
 
     // File picking
@@ -662,6 +668,8 @@
 
         if (tabName === 'history') renderHistory();
         if (tabName === 'favorites') renderFavorites();
+        if (tabName === 'learn') initLearnBooks();
+        else saveLearnProgress();
     }
 
     // Go back
@@ -669,6 +677,11 @@
         if (definitionArea.querySelector('.def-content')) {
             clearSearch();
             definitionArea.innerHTML = '';
+            return 'handled';
+        }
+        const bookPicker = document.getElementById('book-picker-popup');
+        if (bookPicker && !bookPicker.classList.contains('hidden')) {
+            window.hideBookPicker();
             return 'handled';
         }
         const activeTab = document.querySelector('.nav-item.active');
@@ -710,6 +723,345 @@
 
         return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
     }
+
+    // ===== Learn Module =====
+    const LEARN_DICT_PREFIX = 'dicts/';
+    let learnBookList = [];
+    let learnCurrentBook = null;
+    let learnWords = [];
+    let learnIndex = 0;
+    let learnFlipped = false;
+    let learnStats = { new: 0, known: 0, unknown: 0 };
+
+    function initLearnBooks() {
+        const lastBook = localStorage.getItem('learn_last_book');
+        if (lastBook) {
+            loadLearnBook(lastBook);
+        } else {
+            document.getElementById('learn-word').textContent = '请选择词书';
+            document.getElementById('learn-phonetic').textContent = '点击左上角选择';
+        }
+    }
+
+    window.showBookPicker = function() {
+        const popup = document.getElementById('book-picker-popup');
+        popup.classList.remove('hidden');
+
+        if (learnBookList.length > 0) return;
+
+        const listEl = document.getElementById('learn-book-list');
+        const searchEl = document.getElementById('learn-search-book');
+        listEl.innerHTML = '<div class="loading">加载词书列表...</div>';
+
+        // Use async fetch instead of bridge
+        fetch('dicts/index.json').then(r => r.json()).then(files => {
+            learnBookList = files;
+            renderLearnBookList(learnBookList);
+        }).catch(() => {
+            // Fallback: use bridge
+            if (window.AndroidBridge && window.AndroidBridge.listDictJsonFiles) {
+                try {
+                    const json = window.AndroidBridge.listDictJsonFiles();
+                    learnBookList = JSON.parse(json);
+                    renderLearnBookList(learnBookList);
+                } catch (e) {
+                    listEl.innerHTML = '<div class="empty-msg">加载失败</div>';
+                }
+            }
+        });
+
+        searchEl.oninput = () => {
+            const q = searchEl.value.trim().toLowerCase();
+            const filtered = learnBookList.filter(b => b.toLowerCase().includes(q));
+            renderLearnBookList(filtered);
+        };
+    };
+
+    window.hideBookPicker = function() {
+        document.getElementById('book-picker-popup').classList.add('hidden');
+    };
+
+    function renderLearnBookList(books) {
+        const listEl = document.getElementById('learn-book-list');
+        const countEl = document.getElementById('learn-book-count');
+        countEl.textContent = books.length;
+        listEl.innerHTML = books.map(name => `
+            <div class="learn-book-item" data-book="${name}">
+                <span class="learn-book-name">${escapeHtml(name)}</span>
+            </div>
+        `).join('');
+        listEl.querySelectorAll('.learn-book-item').forEach(item => {
+            item.addEventListener('click', () => {
+                window.learnSelectBook(item.dataset.book);
+            });
+        });
+    }
+
+    function loadLearnBook(bookName) {
+        learnCurrentBook = bookName;
+        localStorage.setItem('learn_last_book', bookName);
+        window.hideBookPicker();
+        document.getElementById('learn-book-title').textContent = bookName;
+
+        const cardArea = document.getElementById('learn-card-area');
+        const actions = document.querySelector('.learn-actions');
+        const doneView = document.getElementById('learn-done-view');
+        doneView.classList.add('hidden');
+        actions.classList.add('hidden');
+        cardArea.classList.remove('hidden');
+        document.getElementById('learn-word').textContent = '加载中...';
+        document.getElementById('learn-phonetic').textContent = '';
+        document.querySelector('.learn-card-front').classList.remove('hidden');
+        document.querySelector('.learn-card-back').classList.add('hidden');
+
+        setTimeout(() => {
+            try {
+                let text = '';
+                if (window.AndroidBridge && window.AndroidBridge.readDictJson) {
+                    text = window.AndroidBridge.readDictJson(bookName);
+                }
+                if (text) {
+                    processLearnWords(bookName, JSON.parse(text));
+                } else {
+                    document.getElementById('learn-word').textContent = '加载失败';
+                }
+            } catch (e) {
+                console.error('Load error:', e);
+                document.getElementById('learn-word').textContent = '加载失败: ' + e.message;
+            }
+        }, 10);
+    }
+
+    window._dictJsonCallback = function() {};
+
+    function processLearnWords(bookName, words) {
+        learnWords = words;
+        learnIndex = 0;
+        learnFlipped = false;
+        learnStats = { new: 0, known: 0, unknown: 0 };
+
+        const progress = loadLearnProgress(bookName);
+        const knownSet = new Set(progress.known || []);
+        const unknownSet = new Set(progress.unknown || []);
+
+        for (let i = 0; i < learnWords.length; i++) {
+            const w = learnWords[i];
+            if (knownSet.has(w.name)) { learnStats.known++; w._status = 'known'; }
+            else if (unknownSet.has(w.name)) { learnStats.unknown++; w._status = 'unknown'; }
+            else { learnStats.new++; }
+        }
+
+        shuffleNewWords();
+        showLearnCard();
+    }
+
+    function renderLearnBookList(books) {
+        const listEl = document.getElementById('learn-book-list');
+        listEl.innerHTML = books.map(name => `
+            <div class="learn-book-item" data-book="${name}">
+                <span class="learn-book-name">${escapeHtml(name)}</span>
+            </div>
+        `).join('');
+        listEl.querySelectorAll('.learn-book-item').forEach(item => {
+            item.addEventListener('click', () => {
+                loadLearnBook(item.dataset.book);
+            });
+        });
+    }
+
+    function shuffleNewWords() {
+        const newWords = learnWords.filter(w => !w._status);
+        for (let i = newWords.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [newWords[i], newWords[j]] = [newWords[j], newWords[i]];
+        }
+        const known = learnWords.filter(w => w._status === 'known');
+        learnWords = [...newWords, ...known];
+    }
+
+    function showLearnCard() {
+        const doneView = document.getElementById('learn-done-view');
+        const cardArea = document.getElementById('learn-card-area');
+        const actions = document.querySelector('.learn-actions');
+
+        document.getElementById('stat-new').textContent = learnStats.new;
+        document.getElementById('stat-known').textContent = learnStats.known;
+        document.getElementById('stat-unknown').textContent = learnStats.unknown;
+
+        const total = learnWords.length;
+        const done = learnStats.known + learnStats.unknown;
+        document.getElementById('learn-progress-text').textContent =
+            total > 0 ? `${done}/${total}` : '0/0';
+
+        const remaining = learnWords.filter(w => !w._status);
+        if (remaining.length === 0) {
+            doneView.classList.remove('hidden');
+            cardArea.classList.add('hidden');
+            actions.classList.add('hidden');
+            document.getElementById('learn-done-stats').textContent =
+                `掌握 ${learnStats.known} 词，待复习 ${learnStats.unknown} 词`;
+            saveLearnProgress();
+            return;
+        }
+
+        doneView.classList.add('hidden');
+        cardArea.classList.remove('hidden');
+        actions.classList.remove('hidden');
+
+        while (learnIndex < learnWords.length && learnWords[learnIndex]._status) learnIndex++;
+        if (learnIndex >= learnWords.length) {
+            learnIndex = 0;
+            while (learnIndex < learnWords.length && learnWords[learnIndex]._status) learnIndex++;
+            if (learnIndex >= learnWords.length) {
+                doneView.classList.remove('hidden');
+                cardArea.classList.add('hidden');
+                actions.classList.add('hidden');
+                saveLearnProgress();
+                return;
+            }
+        }
+
+        const word = learnWords[learnIndex];
+        document.getElementById('learn-word').textContent = word.name;
+        document.getElementById('learn-phonetic').textContent =
+            (word.ukphone ? '/' + word.ukphone + '/' : '') +
+            (word.usphone && word.usphone !== word.ukphone ? '  /' + word.usphone + '/' : '');
+        document.getElementById('learn-word-back').textContent = word.name;
+        document.getElementById('learn-trans').innerHTML =
+            (word.trans || []).map(t => escapeHtml(t)).join('<br>');
+
+        learnFlipped = false;
+        document.querySelector('.learn-card-front').classList.remove('hidden');
+        document.querySelector('.learn-card-back').classList.add('hidden');
+    }
+
+    window.learnFlip = function() {
+        learnFlipped = !learnFlipped;
+        document.querySelector('.learn-card-front').classList.toggle('hidden', learnFlipped);
+        document.querySelector('.learn-card-back').classList.toggle('hidden', !learnFlipped);
+    };
+
+    window.learnMark = function(isKnown) {
+        if (learnIndex >= learnWords.length) return;
+        const word = learnWords[learnIndex];
+        if (isKnown) {
+            if (word._status !== 'known') learnStats.known++;
+            if (!word._status) learnStats.new--;
+            else if (word._status === 'unknown') learnStats.unknown--;
+            word._status = 'known';
+        } else {
+            if (word._status !== 'unknown') learnStats.unknown++;
+            if (!word._status) learnStats.new--;
+            else if (word._status === 'known') learnStats.known--;
+            word._status = 'unknown';
+        }
+        learnIndex++;
+        saveLearnProgress();
+        showLearnCard();
+    };
+
+    window.learnBack = function() {
+        window.hideBookPicker();
+    };
+
+    window.learnReset = function() {
+        learnIndex = 0;
+        learnStats = { new: 0, known: 0, unknown: 0 };
+        learnWords.forEach(w => {
+            w._status = null;
+            learnStats.new++;
+        });
+        shuffleNewWords();
+        showLearnCard();
+    };
+
+    function getLearnStorageKey(bookName) { return 'learn_' + bookName; }
+
+    function loadLearnProgress(bookName) {
+        try { return JSON.parse(localStorage.getItem(getLearnStorageKey(bookName))) || {}; }
+        catch(e) { return {}; }
+    }
+
+    function saveLearnProgress() {
+        if (!learnCurrentBook) return;
+        const known = [], unknown = [];
+        learnWords.forEach(w => {
+            if (w._status === 'known') known.push(w.name);
+            else if (w._status === 'unknown') unknown.push(w.name);
+        });
+        localStorage.setItem(getLearnStorageKey(learnCurrentBook), JSON.stringify({ known, unknown }));
+    }
+
+    // Word List Panel
+    let wordListOpen = false;
+    let wordListType = '';
+
+    window.toggleWordList = function(type) {
+        const panel = document.getElementById('word-list-panel');
+        const cardArea = document.getElementById('learn-card-area');
+        const actions = document.querySelector('.learn-actions');
+        const doneView = document.getElementById('learn-done-view');
+        if (wordListOpen && wordListType === type) {
+            panel.classList.add('hidden');
+            cardArea.classList.remove('hidden');
+            actions.classList.remove('hidden');
+            wordListOpen = false;
+            return;
+        }
+        wordListType = type;
+        wordListOpen = true;
+        renderWordList(type);
+        panel.classList.remove('hidden');
+        cardArea.classList.add('hidden');
+        actions.classList.add('hidden');
+        doneView.classList.add('hidden');
+    };
+
+    window.closeWordList = function() {
+        document.getElementById('word-list-panel').classList.add('hidden');
+        document.getElementById('learn-card-area').classList.remove('hidden');
+        document.querySelector('.learn-actions').classList.remove('hidden');
+        wordListOpen = false;
+    };
+
+    function renderWordList(type) {
+        const titleEl = document.getElementById('word-list-title');
+        const contentEl = document.getElementById('word-list-content');
+
+        const titles = { new: '新词', known: '已掌握', unknown: '待复习' };
+        titleEl.textContent = titles[type] + ' (' + learnStats[type] + ')';
+
+        let words = [];
+        if (type === 'new') {
+            words = learnWords.filter(w => !w._status);
+        } else if (type === 'known') {
+            words = learnWords.filter(w => w._status === 'known');
+        } else if (type === 'unknown') {
+            words = learnWords.filter(w => w._status === 'unknown');
+        }
+
+        if (words.length === 0) {
+            contentEl.innerHTML = '<div class="empty-msg">暂无单词</div>';
+            return;
+        }
+
+        contentEl.innerHTML = words.map(w => `
+            <div class="word-list-item" onclick="window.learnJumpToWord('${escapeHtml(w.name)}')">
+                <div class="word-list-word">${escapeHtml(w.name)}</div>
+                <div class="word-list-trans">${escapeHtml((w.trans || []).slice(0, 2).join(', '))}</div>
+            </div>
+        `).join('');
+    }
+
+    window.learnJumpToWord = function(word) {
+        const idx = learnWords.findIndex(w => w.name === word);
+        if (idx >= 0) {
+            learnIndex = idx;
+            learnFlipped = false;
+            showLearnCard();
+            window.closeWordList();
+        }
+    };
 
     // Start
     init();

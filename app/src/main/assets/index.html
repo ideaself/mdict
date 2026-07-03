@@ -29,6 +29,61 @@
             </div>
         </div>
 
+        <!-- Learn Tab -->
+        <div id="tab-learn" class="tab-content">
+            <div class="learn-header">
+                <span id="learn-book-title" class="learn-book-title" onclick="window.showBookPicker()">请选择词书 ▾</span>
+                <span id="learn-progress-text" class="learn-progress-text"></span>
+            </div>
+            <div class="learn-stats">
+                <span class="stat-item stat-new" data-list="new">新词: <b id="stat-new">0</b></span>
+                <span class="stat-item stat-known" data-list="known">已掌握: <b id="stat-known">0</b></span>
+                <span class="stat-item stat-unknown" data-list="unknown">待复习: <b id="stat-unknown">0</b></span>
+            </div>
+            <div id="word-list-panel" class="word-list-panel hidden">
+                <div class="word-list-header">
+                    <span id="word-list-title"></span>
+                    <button class="btn-close-list">✕</button>
+                </div>
+                <div id="word-list-content" class="word-list-content"></div>
+            </div>
+            <div id="learn-card-area" class="learn-card-area" onclick="window.learnFlip()">
+                <div id="learn-card" class="learn-card">
+                    <div class="learn-card-front">
+                        <div id="learn-word" class="learn-word"></div>
+                        <div id="learn-phonetic" class="learn-phonetic"></div>
+                        <div class="learn-hint">点击显示释义</div>
+                    </div>
+                    <div class="learn-card-back hidden">
+                        <div id="learn-word-back" class="learn-word"></div>
+                        <div id="learn-trans" class="learn-trans"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="learn-actions">
+                <button class="btn-learn-action btn-unknown" onclick="window.learnMark(false)">不认识</button>
+                <button class="btn-learn-action btn-known" onclick="window.learnMark(true)">认识</button>
+            </div>
+            <div id="learn-done-view" class="learn-done-view hidden">
+                <div class="learn-done-icon">🎉</div>
+                <h3>今日学习完成！</h3>
+                <p id="learn-done-stats"></p>
+                <button class="btn-primary" onclick="window.learnReset()">再学一轮</button>
+            </div>
+            <!-- Book Picker Popup -->
+            <div id="book-picker-popup" class="book-picker-popup hidden">
+                <div class="book-picker-mask" onclick="window.hideBookPicker()"></div>
+                <div class="book-picker-sheet">
+                    <div class="book-picker-header">
+                        <span class="book-picker-title">选择词书</span>
+                        <button class="book-picker-close" onclick="window.hideBookPicker()">✕</button>
+                    </div>
+                    <input type="text" id="learn-search-book" class="learn-search-input" placeholder="搜索词书...">
+                    <div id="learn-book-list" class="learn-book-list"></div>
+                </div>
+            </div>
+        </div>
+
         <!-- History Tab -->
         <div id="tab-history" class="tab-content">
             <div class="section-header">
@@ -82,6 +137,10 @@
             <button class="nav-item active" data-tab="search">
                 <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
                 <span>查询</span>
+            </button>
+            <button class="nav-item" data-tab="learn">
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M21 5c-1.11-.35-2.33-.5-3.5-.5-1.95 0-4.05.4-5.5 1.5-1.45-1.1-3.55-1.5-5.5-1.5S2.45 4.9 1 6v14.65c0 .25.25.5.5.5.1 0 .15-.05.25-.05C3.1 20.45 5.05 20 6.5 20c1.95 0 4.05.4 5.5 1.5 1.35-.85 3.8-1.5 5.5-1.5 1.65 0 3.35.3 4.75 1.05.1.05.15.05.25.05.25 0 .5-.25.5-.5V6c-.6-.45-1.25-.75-2-1zm0 13.5c-1.1-.35-2.3-.5-3.5-.5-1.7 0-4.15.65-5.5 1.5V8c1.35-.85 3.8-1.5 5.5-1.5 1.2 0 2.4.15 3.5.5v11.5z"/></svg>
+                <span>学习</span>
             </button>
             <button class="nav-item" data-tab="history">
                 <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>

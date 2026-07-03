@@ -542,6 +542,362 @@ html, body {
     line-height: 1;
 }
 
+/* Learn Tab */
+.learn-search-input {
+    width: 100%;
+    height: 40px;
+    padding: 0 12px;
+    border: 1px solid var(--divider);
+    border-radius: 8px;
+    font-size: 15px;
+    outline: none;
+    background: var(--bg);
+    margin-top: 8px;
+    margin-bottom: 8px;
+}
+
+.learn-search-input:focus {
+    border-color: var(--primary);
+}
+
+#learn-select-view {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+}
+
+.learn-book-list {
+    flex: 1;
+    overflow-y: auto;
+}
+
+.learn-book-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--divider);
+    cursor: pointer;
+    min-height: 48px;
+}
+
+.learn-book-item:active {
+    background: var(--primary-light);
+}
+
+.learn-book-item:last-child { border-bottom: none; }
+
+.learn-book-name {
+    font-size: 15px;
+    font-weight: 500;
+}
+
+.learn-book-count {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.learn-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--divider);
+}
+
+.btn-learn-back {
+    border: none;
+    background: none;
+    font-size: 15px;
+    color: var(--primary);
+    cursor: pointer;
+    padding: 4px 0;
+}
+
+.learn-book-title {
+    font-size: 15px;
+    font-weight: 500;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin: 0 8px;
+    cursor: pointer;
+    color: var(--primary);
+    padding: 4px 0;
+}
+
+.learn-progress-text {
+    font-size: 13px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.learn-stats {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    padding: 10px 16px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    background: var(--surface);
+    border-bottom: 1px solid var(--divider);
+}
+
+.stat-new b { color: var(--primary); }
+.stat-known b { color: var(--success); }
+.stat-unknown b { color: var(--danger); }
+
+.stat-item {
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 6px;
+    transition: background 0.2s;
+}
+
+.stat-item:active {
+    background: rgba(0,0,0,0.05);
+}
+
+/* Word List Panel */
+.word-list-panel {
+    background: var(--surface);
+    border-bottom: 1px solid var(--divider);
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.word-list-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--divider);
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text);
+}
+
+.btn-close-list {
+    width: 28px;
+    height: 28px;
+    border: none;
+    background: none;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+    font-size: 16px;
+}
+
+.btn-close-list:active {
+    background: rgba(0,0,0,0.05);
+}
+
+.word-list-content {
+    flex: 1;
+    overflow-y: auto;
+}
+
+.word-list-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--divider);
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.word-list-item:active {
+    background: var(--primary-light);
+}
+
+.word-list-word {
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--text);
+}
+
+.word-list-trans {
+    font-size: 13px;
+    color: var(--text-secondary);
+    max-width: 50%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+}
+
+.learn-card-area {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 16px;
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.learn-card {
+    width: 100%;
+    max-width: 360px;
+    min-height: 240px;
+    background: var(--surface);
+    border-radius: 16px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px 24px;
+    text-align: center;
+    transition: transform 0.2s;
+}
+
+.learn-card:active {
+    transform: scale(0.97);
+}
+
+.learn-card-front, .learn-card-back {
+    width: 100%;
+}
+
+.learn-word {
+    font-size: 32px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 8px;
+}
+
+.learn-phonetic {
+    font-size: 15px;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+}
+
+.learn-hint {
+    font-size: 13px;
+    color: var(--divider);
+}
+
+.learn-trans {
+    font-size: 18px;
+    line-height: 1.8;
+    color: var(--text);
+    text-align: left;
+}
+
+.learn-actions {
+    display: flex;
+    gap: 16px;
+    padding: 16px 24px;
+    padding-bottom: calc(var(--nav-height) + 16px);
+}
+
+.btn-learn-action {
+    flex: 1;
+    padding: 14px 0;
+    border: none;
+    border-radius: 12px;
+    font-size: 16px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.2s;
+}
+
+.btn-learn-action:active { opacity: 0.8; }
+
+.btn-unknown {
+    background: #FFEBEE;
+    color: var(--danger);
+}
+
+.btn-known {
+    background: #E8F5E9;
+    color: var(--success);
+}
+
+.learn-done-view {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: var(--surface);
+    z-index: 50;
+    padding: 24px;
+    text-align: center;
+}
+
+.learn-done-icon { font-size: 64px; margin-bottom: 16px; }
+.learn-done-view h3 { font-size: 22px; margin-bottom: 8px; }
+.learn-done-view p { color: var(--text-secondary); margin-bottom: 24px; }
+
+/* Book Picker Popup */
+.book-picker-popup {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    z-index: 500;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+}
+
+.book-picker-mask {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.4);
+}
+
+.book-picker-sheet {
+    position: relative;
+    width: 100%;
+    max-height: 70vh;
+    background: var(--surface);
+    border-radius: 16px 16px 0 0;
+    display: flex;
+    flex-direction: column;
+    animation: slideUp 0.2s ease-out;
+}
+
+@keyframes slideUp {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+}
+
+.book-picker-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 16px 8px;
+}
+
+.book-picker-title {
+    font-size: 17px;
+    font-weight: 600;
+}
+
+.book-picker-close {
+    width: 32px;
+    height: 32px;
+    border: none;
+    background: none;
+    font-size: 20px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    border-radius: 50%;
+}
+
+.book-picker-close:active { background: rgba(0,0,0,0.05); }
+
 /* Custom CSS from imported dict */
 .dict-css {
     /* placeholder for imported dictionary CSS */
