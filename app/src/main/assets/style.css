@@ -6,19 +6,19 @@
 }
 
 :root {
-    --primary: #1976D2;
-    --primary-dark: #1565C0;
-    --primary-light: #BBDEFB;
-    --accent: #FF6F00;
-    --bg: #F5F5F5;
+    --primary: #F9A825;
+    --primary-dark: #F57F17;
+    --primary-light: #FFF8E1;
+    --accent: #FFB300;
+    --bg: #FFFFFF;
     --surface: #FFFFFF;
-    --text: #212121;
-    --text-secondary: #757575;
-    --divider: #E0E0E0;
+    --text: #3E2723;
+    --text-secondary: #8D6E63;
+    --divider: #E0D8C0;
     --danger: #D32F2F;
     --success: #388E3C;
     --nav-height: 56px;
-    --toolbar-height: 56px;
+    --toolbar-height: 0px;
 }
 
 html, body {
@@ -71,6 +71,7 @@ html, body {
 
 .search-box input:focus {
     border-color: var(--primary);
+    background: var(--surface);
 }
 
 .btn-icon {
@@ -165,7 +166,7 @@ html, body {
 }
 
 .suggestion-item .highlight {
-    color: var(--primary);
+    color: var(--primary-dark);
     font-weight: 600;
 }
 
@@ -495,8 +496,8 @@ html, body {
 }
 
 .import-status.loading {
-    background: #E3F2FD;
-    color: var(--primary);
+    background: var(--primary-light);
+    color: var(--primary-dark);
 }
 
 .hidden {

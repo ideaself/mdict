@@ -70,8 +70,7 @@
         // Dict selector
         dictSelect.addEventListener('change', onDictChange);
 
-        // Welcome import button
-        document.getElementById('btn-import-welcome')?.addEventListener('click', () => pickFile('application/octet-stream,.mdx'));
+
 
         // Tab navigation
         navItems.forEach(item => {
@@ -95,6 +94,12 @@
             if (!e.target.closest('.search-box') && !e.target.closest('.suggestion-list')) {
                 suggestionList.classList.add('hidden');
             }
+        });
+
+        // Click definition area to focus search input
+        definitionArea.addEventListener('click', (e) => {
+            if (e.target.closest('a') || e.target.closest('button') || e.target.closest('.suggestion-item')) return;
+            searchInput.focus();
         });
     }
 
@@ -306,12 +311,7 @@
         if (currentDict && currentDict.id === dictId) {
             currentDict = null;
             currentDictName = '';
-            definitionArea.innerHTML = `
-                <div class="welcome-msg">
-                    <div class="welcome-icon">📖</div>
-                    <h2>MDict 词典</h2>
-                    <p>请先导入词典文件 (.mdx)</p>
-                </div>`;
+            definitionArea.innerHTML = '';
         }
         refreshDictList();
     };
@@ -361,12 +361,7 @@
             }
         }
 
-        definitionArea.innerHTML = `
-            <div class="no-result">
-                <div class="emoji">⚠️</div>
-                <p>需要重新导入词典文件</p>
-                <button class="btn-primary" onclick="window.pickFileForImport()" style="margin-top:12px">导入词典</button>
-            </div>`;
+        definitionArea.innerHTML = '';
     }
 
     function base64ToArrayBuffer(base64) {
@@ -377,10 +372,6 @@
         }
         return bytes.buffer;
     }
-
-    window.pickFileForImport = function() {
-        pickFile('application/octet-stream,.mdx');
-    };
 
     // Search
     function onSearchInput(e) {
@@ -416,9 +407,11 @@
     function onSearchKeydown(e) {
         if (e.key === 'Enter') {
             suggestionList.classList.add('hidden');
+            searchInput.blur();
             doSearch();
         } else if (e.key === 'Escape') {
             suggestionList.classList.add('hidden');
+            searchInput.blur();
         }
     }
 
@@ -435,9 +428,9 @@
 
         if (!currentDict) {
             if (allDicts.length === 0) {
-                definitionArea.innerHTML = '<div class="no-result"><div class="emoji">📚</div><p>请先导入词典</p></div>';
+                definitionArea.innerHTML = '';
             } else {
-                definitionArea.innerHTML = '<div class="no-result"><div class="emoji">👆</div><p>请先选择词典</p></div>';
+                definitionArea.innerHTML = '';
             }
             return;
         }
@@ -460,7 +453,7 @@
             // Check if favorited
             const isFav = favorites.some(f => f.word === word && f.dictId === currentDictName);
 
-            let defHtml = result.definition || '<p style="color:#999">无释义</p>';
+            let defHtml = result.definition || '<p style="color:#8D6E63">无释义</p>';
 
             // Try to fix relative resource paths
             defHtml = fixResourcePaths(defHtml);
@@ -491,10 +484,10 @@
                     <div class="no-result">
                         <div class="emoji">🔍</div>
                         <p>未找到 "${escapeHtml(word)}" 的精确匹配</p>
-                        <p style="margin-top:12px;color:#666">您是否在找:</p>
+                        <p style="margin-top:12px;color:#5D4037">您是否在找:</p>
                         <div style="margin-top:8px;text-align:left">
                             ${fuzzyResults.slice(0, 10).map(item => `
-                                <div class="suggestion-item" onclick="window.searchWord('${escapeHtml(item.keyText)}')" style="padding:8px 0;cursor:pointer;color:#1976D2">
+                                <div class="suggestion-item" onclick="window.searchWord('${escapeHtml(item.keyText)}')" style="padding:8px 0;cursor:pointer;color:#8D6E63">
                                     ${escapeHtml(item.keyText)}
                                 </div>
                             `).join('')}
@@ -675,14 +668,7 @@
     function goBack() {
         if (definitionArea.querySelector('.def-content')) {
             clearSearch();
-            definitionArea.innerHTML = `
-                <div class="welcome-msg">
-                    <div class="welcome-icon">📖</div>
-                    <h2>MDict 词典</h2>
-                    <p>请先导入词典文件 (.mdx)</p>
-                    <button id="btn-import-welcome" class="btn-primary">导入词典</button>
-                </div>`;
-            document.getElementById('btn-import-welcome')?.addEventListener('click', () => pickFile('application/octet-stream,.mdx'));
+            definitionArea.innerHTML = '';
             return 'handled';
         }
         const activeTab = document.querySelector('.nav-item.active');

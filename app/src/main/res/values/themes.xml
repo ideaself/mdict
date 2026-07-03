@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.MDict" parent="Theme.MaterialComponents.Light.NoActionBar">
-        <item name="colorPrimary">#1976D2</item>
-        <item name="colorPrimaryVariant">#1565C0</item>
+        <item name="colorPrimary">#F9A825</item>
+        <item name="colorPrimaryVariant">#F57F17</item>
         <item name="colorOnPrimary">#FFFFFF</item>
-        <item name="colorSecondary">#FF6F00</item>
-        <item name="colorSecondaryVariant">#E65100</item>
+        <item name="colorSecondary">#F9A825</item>
+        <item name="colorSecondaryVariant">#F57F17</item>
         <item name="colorOnSecondary">#FFFFFF</item>
-        <item name="android:statusBarColor">#1565C0</item>
+        <item name="android:statusBarColor">#FFFFFF</item>
+        <item name="android:windowLightStatusBar">true</item>
     </style>
 </resources>
