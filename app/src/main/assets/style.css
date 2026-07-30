@@ -1037,3 +1037,138 @@ html, body {
     background: var(--divider);
     border-radius: 2px;
 }
+
+/* About Popup */
+.about-popup {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.about-mask {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+}
+
+.about-sheet {
+    position: relative;
+    background: var(--surface);
+    border-radius: 16px;
+    width: 85%;
+    max-width: 360px;
+    max-height: 80vh;
+    overflow-y: auto;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    animation: aboutSlideUp 0.3s ease;
+}
+
+@keyframes aboutSlideUp {
+    from { transform: translateY(40px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+.about-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--divider);
+}
+
+.about-title {
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.about-close {
+    background: none;
+    border: none;
+    font-size: 18px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 4px 8px;
+}
+
+.about-body {
+    padding: 24px 20px;
+    text-align: center;
+}
+
+.about-logo {
+    font-size: 56px;
+    margin-bottom: 12px;
+}
+
+.about-app-name {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 4px;
+}
+
+.about-version {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 16px;
+}
+
+.about-desc {
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    margin-bottom: 20px;
+}
+
+.about-features {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.about-feature {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    background: var(--primary-light);
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--text);
+}
+
+.about-feature-icon {
+    font-size: 16px;
+}
+
+.about-tech {
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.8;
+    margin-bottom: 20px;
+}
+
+.about-tech a {
+    color: var(--primary-dark);
+    text-decoration: none;
+}
+
+.about-footer {
+    font-size: 12px;
+    color: var(--text-secondary);
+    border-top: 1px solid var(--divider);
+    padding-top: 16px;
+}
+
+.about-footer p {
+    margin-bottom: 4px;
+}
+
+.about-github a {
+    color: var(--primary-dark);
+    text-decoration: none;
+}

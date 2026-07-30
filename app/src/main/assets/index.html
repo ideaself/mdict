@@ -144,6 +144,50 @@
             <div class="settings-group">
                 <h3>关于</h3>
                 <p class="settings-desc">MDict v1.0.0<br>基于 js-mdict 的词典应用</p>
+                <button id="btn-about" class="btn-secondary" style="margin-top:8px">了解更多</button>
+            </div>
+        </div>
+
+        <!-- About Popup -->
+        <div id="about-popup" class="about-popup hidden">
+            <div class="about-mask" onclick="window.hideAbout()"></div>
+            <div class="about-sheet">
+                <div class="about-header">
+                    <span class="about-title">关于 MDict</span>
+                    <button class="about-close" onclick="window.hideAbout()">✕</button>
+                </div>
+                <div class="about-body">
+                    <div class="about-logo">📖</div>
+                    <h2 class="about-app-name">MDict</h2>
+                    <p class="about-version">v1.0.0</p>
+                    <p class="about-desc">一款简洁高效的英语词典应用，支持 MDX 格式词典文件，内置学习模式和间隔重复复习系统，帮助你轻松记忆单词。</p>
+                    <div class="about-features">
+                        <div class="about-feature">
+                            <span class="about-feature-icon">🔍</span>
+                            <span>词典查询</span>
+                        </div>
+                        <div class="about-feature">
+                            <span class="about-feature-icon">📚</span>
+                            <span>学习模式</span>
+                        </div>
+                        <div class="about-feature">
+                            <span class="about-feature-icon">🔄</span>
+                            <span>SRS 复习</span>
+                        </div>
+                        <div class="about-feature">
+                            <span class="about-feature-icon">⭐</span>
+                            <span>收藏夹</span>
+                        </div>
+                    </div>
+                    <div class="about-tech">
+                        <p>基于 <a href="https://github.com/terasum/js-mdict" target="_blank">js-mdict</a> 词典解析引擎</p>
+                        <p>使用 SM-2 间隔重复算法</p>
+                    </div>
+                    <div class="about-footer">
+                        <p>© 2026 MDict. All rights reserved.</p>
+                        <p class="about-github"><a href="https://github.com/ideaself/mdict" target="_blank">github.com/ideaself/mdict</a></p>
+                    </div>
+                </div>
             </div>
         </div>
 

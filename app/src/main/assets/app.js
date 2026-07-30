@@ -81,7 +81,7 @@
         document.getElementById('btn-clear-history')?.addEventListener('click', clearHistory);
 
         // Settings
-        document.getElementById('btn-import-mdx')?.addEventListener('click', () => pickFile('application/octet-stream,.mdx'));
+        document.getElementById('btn-import-mdx')?.addEventListener('click', () => pickFile('*/*'));
         document.getElementById('btn-import-css')?.addEventListener('click', () => pickFile('text/css,.css'));
 
         // Global functions
@@ -736,8 +736,64 @@
     let srsData = {}; // { wordName: { easeFactor, interval, nextReview, reviewCount } }
     let reviewQueue = [];
     let reviewDoneCount = 0;
+    let learnLongPressActive = false;
+
+    function setupLearnWordLongPress() {
+        const wordElement = document.getElementById('learn-word');
+        let longPressTimer = null;
+        let isLongPress = false;
+
+        // 长按开始
+        const startLongPress = (e) => {
+            isLongPress = false;
+            learnLongPressActive = false;
+            longPressTimer = setTimeout(() => {
+                isLongPress = true;
+                learnLongPressActive = true;
+                // 获取当前单词
+                if (learnWords.length > 0 && learnIndex < learnWords.length) {
+                    const word = learnWords[learnIndex].name;
+                    if (word) {
+                        // 切换到搜索标签页并查询单词
+                        switchTab('search');
+                        searchWord(word);
+                    }
+                }
+            }, 500); // 500ms 长按阈值
+        };
+
+        // 长按结束
+        const endLongPress = (e) => {
+            if (longPressTimer) {
+                clearTimeout(longPressTimer);
+                longPressTimer = null;
+            }
+            // 如果是长按，阻止后续的点击事件
+            if (isLongPress) {
+                e.preventDefault();
+                e.stopPropagation();
+                // 延迟重置标志，确保点击事件被阻止
+                setTimeout(() => {
+                    learnLongPressActive = false;
+                }, 100);
+            }
+        };
+
+        // 添加事件监听器
+        wordElement.addEventListener('touchstart', startLongPress, { passive: true });
+        wordElement.addEventListener('touchend', endLongPress);
+        wordElement.addEventListener('touchmove', endLongPress);
+        
+        // 鼠标事件支持（桌面端）
+        wordElement.addEventListener('mousedown', startLongPress);
+        wordElement.addEventListener('mouseup', endLongPress);
+        wordElement.addEventListener('mouseleave', endLongPress);
+    }
 
     function initLearnBooks() {
+        // 设置单词长按查询功能
+        setupLearnWordLongPress();
+        
         const lastBook = localStorage.getItem('learn_last_book');
         if (lastBook) {
             loadLearnBook(lastBook);
@@ -1129,6 +1185,9 @@
     }
 
     window.learnFlip = function() {
+        // 如果长按激活，不执行翻转
+        if (learnLongPressActive) return;
+        
         learnFlipped = !learnFlipped;
         document.querySelector('.learn-card-front').classList.toggle('hidden', learnFlipped);
         document.querySelector('.learn-card-back').classList.toggle('hidden', !learnFlipped);
@@ -1261,6 +1320,15 @@
             showLearnCard();
             window.closeWordList();
         }
+    };
+
+    // About popup
+    const aboutPopup = document.getElementById('about-popup');
+    document.getElementById('btn-about').addEventListener('click', function() {
+        aboutPopup.classList.remove('hidden');
+    });
+    window.hideAbout = function() {
+        aboutPopup.classList.add('hidden');
     };
 
     // Start
