@@ -4,23 +4,7 @@ app/build/
 build/
 local.properties
 
-# Node modules
-node_modules/
-package-lock.json
-
-# Temporary files
-shims/
-test.mdx
-test-mdict.mjs
-analyze-structure.mjs
-verify-decrypt.mjs
-build-browser.cjs
-browser-entry.cjs
-browser-entry.js
-gradle-8.5/
-gradle-8.5-bin.zip
-*.log
-
 # OS files
 .DS_Store
 Thumbs.db
+*.log

@@ -16,7 +16,6 @@
 - **前端**: HTML / CSS / JavaScript（运行在 Android WebView 中）
 - **后端**: Android (Java/Kotlin) 提供原生文件访问能力
 - **词典解析**: [js-mdict](https://github.com/terasum/js-mdict) — 纯 JavaScript MDX/MDD 解析库
-- **开发模式**: Node.js 本地服务器，支持浏览器热更新调试
 
 ## 项目结构
 
@@ -27,31 +26,14 @@
 │       ├── app.js              # 应用逻辑
 │       ├── style.css           # 样式
 │       ├── mdict-lib.js        # 词典解析库
-│       └── pako.min.js         # 压缩/解压库
+│       ├── pako.min.js         # 压缩/解压库
+│       └── dicts/              # 内置词书 (JSON)
 ├── mydictionary/               # 词典文件目录 (.mdx)
-├── dicts/                      # 词典数据 (JSON)
-├── dev-server.js               # 开发服务器
 ├── build.gradle                # Gradle 构建配置
-└── package.json                # Node 依赖
+└── settings.gradle             # Gradle 模块配置
 ```
 
-## 开发
-
-### 环境要求
-
-- Node.js 16+
-- Android SDK
-
-### 本地开发
-
-```bash
-npm install
-npm run dev
-```
-
-浏览器打开 http://localhost:3000 即可预览和调试。
-
-### 构建 Android 应用
+## 构建 Android 应用
 
 ```bash
 ./gradlew assembleDebug
