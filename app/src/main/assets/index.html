@@ -142,6 +142,23 @@
                 <div id="css-import-status" class="import-status hidden"></div>
             </div>
             <div class="settings-group">
+                <h3>翻译设置</h3>
+                <p class="settings-desc">选中多个单词时自动进行句子翻译</p>
+                <select id="translate-engine" class="learn-search-input" style="height:44px">
+                    <option value="google">Google 翻译（免费，无需配置）</option>
+                    <option value="deepl">DeepL（需要 API Key）</option>
+                    <option value="openai">OpenAI 兼容接口（DeepSeek 等，需要 API Key）</option>
+                </select>
+                <input type="text" id="translate-apikey" class="learn-search-input" placeholder="API Key">
+                <input type="text" id="translate-baseurl" class="learn-search-input" placeholder="Base URL，如 https://api.deepseek.com">
+                <select id="translate-model" class="learn-search-input" style="height:44px">
+                    <option value="">-- 点击下方按钮获取模型列表 --</option>
+                </select>
+                <button id="btn-list-models" class="btn-secondary" style="margin-top:8px">获取模型列表</button>
+                <button id="btn-save-translate" class="btn-primary" style="margin-top:8px">保存翻译设置</button>
+                <div id="translate-status" class="import-status hidden"></div>
+            </div>
+            <div class="settings-group">
                 <h3>关于</h3>
                 <p class="settings-desc">MDict v1.0.0<br>基于 js-mdict 的词典应用</p>
                 <button id="btn-about" class="btn-secondary" style="margin-top:8px">了解更多</button>

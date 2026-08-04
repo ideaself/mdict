@@ -102,9 +102,9 @@ class MainActivity : AppCompatActivity() {
                 super.onPageFinished(view, url)
                 webViewReady = true
                 syncLookupModeToWeb()
-                pendingLookupWord?.let { word ->
+                pendingLookupWord?.let { text ->
                     pendingLookupWord = null
-                    lookupWord(word)
+                    handleLookupText(text)
                 }
             }
         }
@@ -239,42 +239,183 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleLookupIntent(intent: Intent?) {
-        val word = extractLookupWord(intent) ?: return
-        pendingLookupWord = word
+        val text = extractLookupText(intent) ?: return
+        pendingLookupWord = text
         if (webViewReady) {
             pendingLookupWord = null
-            lookupWord(word)
+            handleLookupText(text)
         }
     }
 
-    private fun extractLookupWord(intent: Intent?): String? {
+    private fun extractLookupText(intent: Intent?): String? {
         if (intent == null) return null
         return when (intent.action) {
             Intent.ACTION_PROCESS_TEXT ->
                 intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()?.trim()
-            Intent.ACTION_SEND -> {
-                val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.trim() ?: return null
-                firstWord(text)
-            }
+            Intent.ACTION_SEND ->
+                intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.trim()
             else -> null
         }
     }
 
-    private fun firstWord(text: String): String? {
-        var i = 0
-        while (i < text.length && !text[i].isLetterOrDigit()) i++
-        if (i >= text.length) return null
-        var j = i
-        while (j < text.length && (text[j].isLetterOrDigit() || text[j] == '-' || text[j] == '\'')) j++
-        return text.substring(i, j)
-    }
-
-    private fun lookupWord(word: String) {
-        webView.evaluateJavascript("window.searchWord(${jsEscape(word)})", null)
+    private fun handleLookupText(text: String) {
+        webView.evaluateJavascript("window.handleLookupText(${jsEscape(text)})", null)
     }
 
     private fun jsEscape(s: String): String {
         return org.json.JSONObject.quote(s)
+    }
+
+    // ---- Translation engines ----
+
+    private fun readTranslateConfig(): org.json.JSONObject {
+        val sp = getSharedPreferences("mdict", MODE_PRIVATE)
+        return org.json.JSONObject().apply {
+            put("engine", sp.getString("t_engine", "google"))
+            put("apiKey", sp.getString("t_apikey", ""))
+            put("baseUrl", sp.getString("t_baseurl", "https://api.deepseek.com"))
+            put("model", sp.getString("t_model", "deepseek-chat"))
+        }
+    }
+
+    private fun saveTranslateConfigInternal(json: String) {
+        try {
+            val o = org.json.JSONObject(json)
+            getSharedPreferences("mdict", MODE_PRIVATE).edit()
+                .putString("t_engine", o.optString("engine", "google"))
+                .putString("t_apikey", o.optString("apiKey", ""))
+                .putString("t_baseurl", o.optString("baseUrl", "https://api.deepseek.com"))
+                .putString("t_model", o.optString("model", "deepseek-chat"))
+                .apply()
+        } catch (e: Exception) {
+            Log.e(TAG, "Save translate config error: ${e.message}")
+        }
+    }
+
+    private fun doTranslate(text: String): String {
+        val cfg = readTranslateConfig()
+        val target = if (containsCJK(text)) "en" else "zh"
+        return when (cfg.optString("engine", "google")) {
+            "deepl" -> translateDeepl(text, target, cfg)
+            "openai" -> translateOpenAI(text, target, cfg)
+            else -> translateGoogle(text, target)
+        }
+    }
+
+    private fun containsCJK(text: String): Boolean {
+        for (ch in text) {
+            if (ch in '\u4e00'..'\u9fff') return true
+        }
+        return false
+    }
+
+    private fun translateGoogle(text: String, target: String): String {
+        val tl = if (target == "en") "en" else "zh-CN"
+        val url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$tl&dt=t&q=" +
+            java.net.URLEncoder.encode(text, "UTF-8")
+        val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android)")
+        conn.connectTimeout = 15000
+        conn.readTimeout = 20000
+        try {
+            val body = conn.inputStream.bufferedReader().use { it.readText() }
+            val segments = org.json.JSONArray(body).getJSONArray(0)
+            val sb = StringBuilder()
+            for (i in 0 until segments.length()) {
+                sb.append(segments.getJSONArray(i).getString(0))
+            }
+            return sb.toString().trim()
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun translateDeepl(text: String, target: String, cfg: org.json.JSONObject): String {
+        val tl = if (target == "en") "EN" else "ZH"
+        val base = cfg.optString("baseUrl", "").ifBlank { "https://api-free.deepl.com" }.trimEnd('/')
+        val conn = java.net.URL("$base/v2/translate").openConnection() as java.net.HttpURLConnection
+        conn.requestMethod = "POST"
+        conn.doOutput = true
+        conn.connectTimeout = 15000
+        conn.readTimeout = 20000
+        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
+        val params = "auth_key=${java.net.URLEncoder.encode(cfg.optString("apiKey"), "UTF-8")}" +
+            "&text=${java.net.URLEncoder.encode(text, "UTF-8")}&target_lang=$tl"
+        try {
+            conn.outputStream.use { it.write(params.toByteArray()) }
+            val body = conn.inputStream.bufferedReader().use { it.readText() }
+            val json = org.json.JSONObject(body)
+            return json.getJSONArray("translations").getJSONObject(0).getString("text").trim()
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun translateOpenAI(text: String, target: String, cfg: org.json.JSONObject): String {
+        val base = cfg.optString("baseUrl", "").ifBlank { "https://api.deepseek.com" }.trimEnd('/')
+        val model = cfg.optString("model", "").ifBlank { "deepseek-chat" }
+        val targetName = if (target == "en") "英文" else "中文"
+        val payload = org.json.JSONObject().apply {
+            put("model", model)
+            put("temperature", 0.3)
+            put("messages", org.json.JSONArray().apply {
+                put(org.json.JSONObject().apply {
+                    put("role", "system")
+                    put("content", "你是专业翻译引擎。请将用户输入翻译成$targetName，直接输出译文，不要解释，不要多余内容。")
+                })
+                put(org.json.JSONObject().apply {
+                    put("role", "user")
+                    put("content", text)
+                })
+            })
+        }
+        val conn = java.net.URL("$base/chat/completions").openConnection() as java.net.HttpURLConnection
+        conn.requestMethod = "POST"
+        conn.doOutput = true
+        conn.connectTimeout = 20000
+        conn.readTimeout = 30000
+        conn.setRequestProperty("Content-Type", "application/json")
+        conn.setRequestProperty("Authorization", "Bearer ${cfg.optString("apiKey")}")
+        try {
+            conn.outputStream.use { it.write(payload.toString().toByteArray()) }
+            val body = conn.inputStream.bufferedReader().use { it.readText() }
+            val json = org.json.JSONObject(body)
+            return json.getJSONArray("choices").getJSONObject(0)
+                .getJSONObject("message").getString("content").trim()
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun listOpenAIModels(): String {
+        val cfg = readTranslateConfig()
+        if (cfg.optString("engine") != "openai") {
+            return org.json.JSONObject().apply {
+                put("ok", false)
+                put("error", "仅 OpenAI 兼容引擎（DeepSeek 等）支持获取模型列表")
+            }.toString()
+        }
+        val base = cfg.optString("baseUrl", "").ifBlank { "https://api.deepseek.com" }.trimEnd('/')
+        val conn = java.net.URL("$base/models").openConnection() as java.net.HttpURLConnection
+        conn.requestMethod = "GET"
+        conn.connectTimeout = 15000
+        conn.readTimeout = 20000
+        conn.setRequestProperty("Authorization", "Bearer ${cfg.optString("apiKey")}")
+        try {
+            val body = conn.inputStream.bufferedReader().use { it.readText() }
+            val json = org.json.JSONObject(body)
+            val data = json.getJSONArray("data")
+            val ids = org.json.JSONArray()
+            for (i in 0 until data.length()) {
+                ids.put(data.getJSONObject(i).optString("id"))
+            }
+            return org.json.JSONObject().apply {
+                put("ok", true)
+                put("models", ids)
+            }.toString()
+        } finally {
+            conn.disconnect()
+        }
     }
 
     inner class WebViewBridge {
@@ -405,6 +546,55 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun openFullApp() {
             runOnUiThread { exitLookupMode() }
+        }
+
+        @JavascriptInterface
+        fun translate(text: String, requestId: Int) {
+            Thread {
+                val result = try {
+                    doTranslate(text)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Translate error: ${e.message}")
+                    "ERROR: ${e.message}"
+                }
+                runOnUiThread {
+                    webView.evaluateJavascript(
+                        "window.onTranslateResult($requestId, ${jsEscape(result)})",
+                        null
+                    )
+                }
+            }.start()
+        }
+
+        @JavascriptInterface
+        fun getTranslateConfig(): String {
+            return readTranslateConfig().toString()
+        }
+
+        @JavascriptInterface
+        fun saveTranslateConfig(json: String) {
+            saveTranslateConfigInternal(json)
+        }
+
+        @JavascriptInterface
+        fun listModels(requestId: Int) {
+            Thread {
+                val result = try {
+                    listOpenAIModels()
+                } catch (e: Exception) {
+                    Log.e(TAG, "List models error: ${e.message}")
+                    org.json.JSONObject().apply {
+                        put("ok", false)
+                        put("error", e.message ?: "unknown")
+                    }.toString()
+                }
+                runOnUiThread {
+                    webView.evaluateJavascript(
+                        "window.onModelsResult($requestId, ${jsEscape(result)})",
+                        null
+                    )
+                }
+            }.start()
         }
 
         @JavascriptInterface

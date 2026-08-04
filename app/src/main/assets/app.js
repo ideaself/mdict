@@ -15,6 +15,10 @@
     let allDicts = [];
     let dictLoading = false;
     let pendingSearchWord = null;
+    let translateRequestId = 0;
+    let currentTranslateId = -1;
+    let modelsRequestId = 0;
+    let translateConfig = { engine: 'google', apiKey: '', baseUrl: '', model: '' };
 
     // DOM Elements
     const searchInput = document.getElementById('search-input');
@@ -33,6 +37,8 @@
         loadSavedData();
         setupEventListeners();
         refreshDictList();
+        loadTranslateConfig();
+        initTranslateSettings();
     }
 
     function loadSavedData() {
@@ -91,6 +97,9 @@
         window.searchWord = searchWord;
         window.goBack = goBack;
         window.setLookupMode = setLookupMode;
+        window.handleLookupText = handleLookupText;
+        window.onTranslateResult = onTranslateResult;
+        window.onModelsResult = onModelsResult;
 
         // Close suggestions when clicking outside
         document.addEventListener('click', (e) => {
@@ -758,6 +767,176 @@
         const cap = word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
         if (cap !== word && !candidates.includes(cap)) candidates.push(cap);
         return candidates;
+    }
+
+    // ---- Sentence translation ----
+
+    function handleLookupText(text) {
+        const trimmed = text.trim();
+        if (!trimmed) return;
+        const words = trimmed.match(/[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F'-]*/g) || [];
+        const isLatin = words.length > 0;
+        if (words.length >= 2 || !isLatin) {
+            doTranslate(trimmed);
+        } else {
+            searchWord(trimmed);
+        }
+    }
+
+    function loadTranslateConfig() {
+        try {
+            if (window.AndroidBridge && window.AndroidBridge.getTranslateConfig) {
+                translateConfig = JSON.parse(window.AndroidBridge.getTranslateConfig());
+            }
+        } catch (e) {
+            console.error('Load translate config error:', e);
+        }
+    }
+
+    function engineDisplayName() {
+        switch (translateConfig.engine) {
+            case 'deepl': return 'DeepL';
+            case 'openai': return translateConfig.model || 'OpenAI';
+            default: return 'Google 翻译';
+        }
+    }
+
+    function doTranslate(text) {
+        translateRequestId++;
+        currentTranslateId = translateRequestId;
+        definitionArea.innerHTML = `
+            <div class="translate-split">
+                <div class="translate-half">
+                    <div class="translate-half-title">原文</div>
+                    <div class="translate-half-content">${escapeHtml(text)}</div>
+                </div>
+                <div class="translate-half">
+                    <div class="translate-half-title">翻译 (${escapeHtml(engineDisplayName())})</div>
+                    <div class="translate-half-content" id="translate-target-content">
+                        <div style="color:#8D6E63">翻译中...</div>
+                    </div>
+                </div>
+            </div>`;
+        if (!window.AndroidBridge || !window.AndroidBridge.translate) {
+            document.getElementById('translate-target-content').innerHTML = '当前环境不支持翻译';
+            return;
+        }
+        window.AndroidBridge.translate(text, translateRequestId);
+    }
+
+    function onTranslateResult(id, result) {
+        if (id !== currentTranslateId) return;
+        const target = document.getElementById('translate-target-content');
+        if (!target) return;
+        if (result.startsWith('ERROR:')) {
+            target.innerHTML = `
+                <div style="color:#B71C1C">翻译失败：${escapeHtml(result.substring(6))}</div>
+                <div style="margin-top:8px;color:#8D6E63">可在「设置 → 翻译设置」中更换翻译引擎</div>`;
+            return;
+        }
+        target.innerHTML = escapeHtml(result);
+    }
+
+    function initTranslateSettings() {
+        const engine = document.getElementById('translate-engine');
+        if (!engine || !window.AndroidBridge) return;
+        loadTranslateConfig();
+        engine.value = translateConfig.engine || 'google';
+        document.getElementById('translate-apikey').value = translateConfig.apiKey || '';
+        document.getElementById('translate-baseurl').value = translateConfig.baseUrl || 'https://api.deepseek.com';
+        const modelSel = document.getElementById('translate-model');
+        if (translateConfig.model) {
+            modelSel.innerHTML = '';
+            const opt = document.createElement('option');
+            opt.value = translateConfig.model;
+            opt.textContent = translateConfig.model;
+            modelSel.appendChild(opt);
+        }
+        document.getElementById('btn-list-models')?.addEventListener('click', listModels);
+        document.getElementById('btn-save-translate')?.addEventListener('click', () => {
+            const cfg = {
+                engine: engine.value,
+                apiKey: document.getElementById('translate-apikey').value.trim(),
+                baseUrl: document.getElementById('translate-baseurl').value.trim(),
+                model: document.getElementById('translate-model').value.trim()
+            };
+            try {
+                if (window.AndroidBridge.saveTranslateConfig) {
+                    window.AndroidBridge.saveTranslateConfig(JSON.stringify(cfg));
+                }
+                translateConfig = cfg;
+                showImportStatus('translate-status', 'success', '翻译设置已保存');
+            } catch (e) {
+                showImportStatus('translate-status', 'error', '保存失败: ' + e.message);
+            }
+        });
+    }
+
+    function listModels() {
+        const engineSel = document.getElementById('translate-engine');
+        if (engineSel.value !== 'openai') {
+            showImportStatus('translate-status', 'error', '仅 OpenAI 兼容引擎（DeepSeek 等）支持获取模型列表');
+            return;
+        }
+        const apiKey = document.getElementById('translate-apikey').value.trim();
+        if (!apiKey) {
+            showImportStatus('translate-status', 'error', '请先填写 API Key');
+            return;
+        }
+        // Persist current form values so the request uses them
+        const cfg = {
+            engine: 'openai',
+            apiKey: apiKey,
+            baseUrl: document.getElementById('translate-baseurl').value.trim(),
+            model: document.getElementById('translate-model').value.trim()
+        };
+        try {
+            if (window.AndroidBridge.saveTranslateConfig) {
+                window.AndroidBridge.saveTranslateConfig(JSON.stringify(cfg));
+            }
+        } catch (e) {}
+        modelsRequestId++;
+        window.AndroidBridge.listModels(modelsRequestId);
+        showImportStatus('translate-status', 'loading', '正在获取模型列表...');
+    }
+
+    function onModelsResult(id, json) {
+        if (id !== modelsRequestId) return;
+        let result;
+        try {
+            result = JSON.parse(json);
+        } catch (e) {
+            showImportStatus('translate-status', 'error', '响应解析失败');
+            return;
+        }
+        if (!result.ok) {
+            showImportStatus('translate-status', 'error', '获取失败: ' + (result.error || '未知错误'));
+            return;
+        }
+        const sel = document.getElementById('translate-model');
+        const current = sel.value || translateConfig.model || '';
+        sel.innerHTML = '';
+        const seen = {};
+        (result.models || []).forEach(m => {
+            if (!seen[m]) {
+                seen[m] = true;
+                const opt = document.createElement('option');
+                opt.value = m;
+                opt.textContent = m;
+                sel.appendChild(opt);
+            }
+        });
+        if (current) {
+            sel.value = current;
+            if (!sel.value) {
+                const opt = document.createElement('option');
+                opt.value = current;
+                opt.textContent = current + '（自定义）';
+                sel.appendChild(opt);
+                sel.value = current;
+            }
+        }
+        showImportStatus('translate-status', 'success', '获取到 ' + result.models.length + ' 个模型');
     }
 
     function doSearchWord(word) {
