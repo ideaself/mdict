@@ -13,6 +13,8 @@
     let favorites = [];
     let customCSS = '';
     let allDicts = [];
+    let dictLoading = false;
+    let pendingSearchWord = null;
 
     // DOM Elements
     const searchInput = document.getElementById('search-input');
@@ -88,6 +90,7 @@
         window.onFilesPicked = onFilesPicked;
         window.searchWord = searchWord;
         window.goBack = goBack;
+        window.setLookupMode = setLookupMode;
 
         // Close suggestions when clicking outside
         document.addEventListener('click', (e) => {
@@ -107,6 +110,24 @@
             el.addEventListener('click', () => window.toggleWordList(el.dataset.list));
         });
         document.querySelector('.btn-close-list')?.addEventListener('click', () => window.closeWordList());
+    }
+
+    // Lookup popup mode: hide bottom nav, add expand-to-fullscreen button
+    function setLookupMode(enabled) {
+        document.body.classList.toggle('lookup-mode', !!enabled);
+        if (enabled) {
+            if (document.getElementById('btn-fullscreen')) return;
+            const btn = document.createElement('button');
+            btn.id = 'btn-fullscreen';
+            btn.className = 'btn-icon';
+            btn.title = '打开完整应用';
+            btn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>';
+            btn.onclick = () => { if (window.AndroidBridge) window.AndroidBridge.openFullApp(); };
+            const box = document.querySelector('.search-box');
+            if (box) box.appendChild(btn);
+        } else {
+            document.getElementById('btn-fullscreen')?.remove();
+        }
     }
 
     // File picking
@@ -172,6 +193,11 @@
         if (!fileName.endsWith('.mdx')) {
             showImportStatus('import-status', 'error', '仅支持 .mdx 文件');
             return;
+        }
+
+        // Re-import invalidates any cached index for this file
+        if (window.AndroidBridge && window.AndroidBridge.deleteDictCache) {
+            window.AndroidBridge.deleteDictCache(fileName + '.idx.json');
         }
 
         showImportStatus('import-status', 'loading', '正在解析词典...');
@@ -309,6 +335,10 @@
 
     window.deleteDict = function(dictId) {
         if (!confirm('确定删除此词典?')) return;
+        const dictInfo = allDicts.find(d => d.id === dictId);
+        if (dictInfo && window.AndroidBridge && window.AndroidBridge.deleteDictCache) {
+            window.AndroidBridge.deleteDictCache(dictInfo.fileName + '.idx.json');
+        }
         allDicts = allDicts.filter(d => d.id !== dictId);
         localStorage.setItem('mdict_dicts', JSON.stringify(allDicts));
         if (window._dictParsers) {
@@ -332,28 +362,69 @@
         saveData();
     }
 
-    function loadDict(dictId) {
-        if (window._dictParsers && window._dictParsers[dictId]) {
-            // Parser exists in memory, just need to set it as current
-            // But we must re-set the buffer because js-mdict uses global scanner
-            const dictInfo = allDicts.find(d => d.id === dictId);
-            if (dictInfo && dictInfo.internalPath && window.AndroidBridge) {
-                const base64 = window.AndroidBridge.readLocalFile(dictInfo.internalPath);
-                if (base64) {
-                    MDictLib.setBuffer(base64ToArrayBuffer(base64));
-                    // Re-create parser with fresh buffer
-                    window._dictParsers[dictId] = new MDictLib.MDX('dummy');
-                }
-            }
-            currentDict = window._dictParsers[dictId];
-            currentDictName = dictId;
+    async function loadDict(dictId) {
+        const dictInfo = allDicts.find(d => d.id === dictId);
+        if (!dictInfo) {
+            finishDictLoad();
             return;
         }
 
-        const dictInfo = allDicts.find(d => d.id === dictId);
-        if (!dictInfo) return;
+        // Parser already in memory and buffer matches this file -> instant
+        if (window._dictParsers && window._dictParsers[dictId] &&
+            window._currentBufferPath === dictInfo.internalPath) {
+            currentDict = window._dictParsers[dictId];
+            currentDictName = dictId;
+            finishDictLoad();
+            return;
+        }
 
-        // Load from internal storage
+        // Index cache exists -> fast startup, records read on demand
+        if (dictInfo.internalPath && window.AndroidBridge && window.AndroidBridge.readDictCache) {
+            try {
+                const cacheJson = window.AndroidBridge.readDictCache(dictInfo.fileName + '.idx.json');
+                if (cacheJson) {
+                    const idx = JSON.parse(cacheJson);
+                    currentDict = createLightParser(idx, dictInfo.internalPath);
+                    currentDictName = dictId;
+                    finishDictLoad();
+                    return;
+                }
+            } catch (e) {
+                console.error('Dict cache load error:', e);
+            }
+        }
+
+        dictLoading = true;
+
+        // Load from internal storage (chunked, keeps UI responsive)
+        if (dictInfo.internalPath && window.AndroidBridge && window.AndroidBridge.readLocalFileChunk) {
+            showDictLoading(dictInfo, 0);
+            const size = window.AndroidBridge.getFileSize(dictInfo.internalPath);
+            if (size > 0) {
+                const buffer = await readFileChunks(dictInfo.internalPath, size, (pct) => showDictLoading(dictInfo, pct));
+                if (buffer) {
+                    try {
+                        MDictLib.setBuffer(buffer);
+                        const parser = new MDictLib.MDX('dummy');
+                        window._dictParsers = window._dictParsers || {};
+                        window._dictParsers[dictId] = parser;
+                        window._currentBufferPath = dictInfo.internalPath;
+                        currentDict = parser;
+                        currentDictName = dictId;
+                        finishDictLoad();
+                        setTimeout(() => buildDictCache(dictInfo, parser), 100);
+                        return;
+                    } catch (e) {
+                        console.error('Parse error:', e);
+                    }
+                }
+            }
+            showDictLoading(dictInfo, -1);
+            finishDictLoad();
+            return;
+        }
+
+        // Legacy fallback: read whole file as base64 in one call
         if (dictInfo.internalPath && window.AndroidBridge) {
             const base64 = window.AndroidBridge.readLocalFile(dictInfo.internalPath);
             if (base64) {
@@ -361,13 +432,240 @@
                 const parser = new MDictLib.MDX('dummy');
                 window._dictParsers = window._dictParsers || {};
                 window._dictParsers[dictId] = parser;
+                window._currentBufferPath = dictInfo.internalPath;
                 currentDict = parser;
                 currentDictName = dictId;
+                finishDictLoad();
                 return;
             }
         }
 
         definitionArea.innerHTML = '';
+        finishDictLoad();
+    }
+
+    const READ_CHUNK_SIZE = 2 * 1024 * 1024;
+
+    async function readFileChunks(path, size, onProgress) {
+        const bytes = new Uint8Array(size);
+        let offset = 0;
+        let lastPct = -1;
+        while (offset < size) {
+            const len = Math.min(READ_CHUNK_SIZE, size - offset);
+            const b64 = window.AndroidBridge.readLocalFileChunk(path, offset, len);
+            if (!b64) return null;
+            const bin = atob(b64);
+            for (let i = 0; i < bin.length; i++) {
+                bytes[offset + i] = bin.charCodeAt(i);
+            }
+            offset += len;
+            const pct = Math.floor((offset / size) * 100);
+            if (pct !== lastPct) {
+                lastPct = pct;
+                onProgress(pct);
+                await new Promise(r => setTimeout(r, 0));
+            }
+        }
+        return bytes.buffer;
+    }
+
+    function showDictLoading(dictInfo, pct) {
+        if (pct === -1) {
+            definitionArea.innerHTML = `
+                <div class="no-result">
+                    <div class="emoji">😕</div>
+                    <p>词典加载失败，请检查文件后重新导入</p>
+                </div>`;
+            return;
+        }
+        const name = escapeHtml(dictInfo.name || dictInfo.id);
+        definitionArea.innerHTML = `
+            <div class="no-result">
+                <div class="emoji">⏳</div>
+                <p>正在加载词典 "${name}"...</p>
+                <div style="margin-top:16px;max-width:240px;margin-left:auto;margin-right:auto">
+                    <div style="background:#EFEBE9;border-radius:8px;height:8px;overflow:hidden">
+                        <div style="background:#F9A825;height:8px;border-radius:8px;width:${pct}%"></div>
+                    </div>
+                    <p style="margin-top:8px;color:#8D6E63">${pct}%</p>
+                </div>
+            </div>`;
+    }
+
+    function finishDictLoad() {
+        dictLoading = false;
+        if (pendingSearchWord !== null) {
+            const word = pendingSearchWord;
+            pendingSearchWord = null;
+            searchWord(word);
+        }
+    }
+
+    // ---- Cache-based lightweight dict access ----
+    // Reads only the index from a JSON cache; record data is read from the
+    // mdx file on demand (single small chunk per lookup), so startup is fast.
+    function createLightParser(idx, filePath) {
+        let enc = idx.enc || 'UTF-8';
+        if (enc.toLowerCase().startsWith('utf-16')) enc = 'utf-16le';
+        const decoder = new TextDecoder(enc);
+        const keywordList = idx.k.map(f => ({
+            keyText: f[0],
+            recordStartOffset: f[1],
+            recordEndOffset: f[2],
+            keyBlockIdx: f[3]
+        }));
+        const recordInfoList = idx.r.map(f => ({
+            packSize: f[0],
+            packAccumulateOffset: f[1],
+            unpackSize: f[2],
+            unpackAccumulatorOffset: f[3]
+        }));
+        const encrypt = idx.encrypt || 0;
+        const recordBlockStart = idx.rbs || 0;
+
+        function lookupKeyBlockByWord(word, isAssociate = false) {
+            const list = keywordList;
+            if (list.length === 0) return undefined;
+            let left = 0;
+            let right = list.length - 1;
+            let mid = 0;
+            while (left <= right) {
+                mid = left + (right - left >> 1);
+                const compRes = word.localeCompare(list[mid].keyText);
+                if (compRes > 0) {
+                    left = mid + 1;
+                } else if (compRes === 0) {
+                    break;
+                } else {
+                    right = mid - 1;
+                }
+            }
+            if (word.localeCompare(list[mid].keyText) !== 0 && !isAssociate) {
+                return undefined;
+            }
+            return list[mid];
+        }
+
+        function reduceRecordBlockInfo(recordStart) {
+            let left = 0;
+            let right = recordInfoList.length - 1;
+            let mid = 0;
+            while (left <= right) {
+                mid = left + (right - left >> 1);
+                if (recordStart >= recordInfoList[mid].unpackAccumulatorOffset) {
+                    left = mid + 1;
+                } else {
+                    right = mid - 1;
+                }
+            }
+            return left - 1;
+        }
+
+        function decompressBuff(recordBuffer) {
+            const compHex = Array.from(recordBuffer.subarray(0, 4),
+                b => b.toString(16).padStart(2, '0')).join('');
+            if (compHex === '00000000') {
+                return recordBuffer.slice(8);
+            }
+            if (encrypt === 1) return null;
+            const payload = recordBuffer.subarray(8, recordBuffer.length);
+            if (compHex === '02000000') {
+                return new Uint8Array(pako.inflate(payload));
+            }
+            return null;
+        }
+
+        function lookupRecordByKeyBlock(item) {
+            const bi = reduceRecordBlockInfo(item.recordStartOffset);
+            if (bi < 0 || bi >= recordInfoList.length) return undefined;
+            const info = recordInfoList[bi];
+            const packed = readFileRange(filePath, recordBlockStart + info.packAccumulateOffset, info.packSize);
+            if (!packed) return undefined;
+            const unpack = decompressBuff(packed);
+            if (!unpack) return undefined;
+            const start = item.recordStartOffset - info.unpackAccumulatorOffset;
+            const end = item.recordEndOffset - info.unpackAccumulatorOffset;
+            return unpack.slice(start, end);
+        }
+
+        return {
+            keywordList: keywordList,
+            meta: { decoder: decoder },
+            lookup(word) {
+                const item = lookupKeyBlockByWord(word);
+                if (!item) return { keyText: word, definition: null };
+                const def = lookupRecordByKeyBlock(item);
+                if (!def) return { keyText: word, definition: null };
+                return { keyText: word, definition: decoder.decode(def) };
+            },
+            contains(substring, caseSensitive = false, limit = 1000) {
+                const searchKey = caseSensitive ? substring : substring.toLowerCase();
+                const res = [];
+                for (const item of keywordList) {
+                    const keyText = caseSensitive ? item.keyText : item.keyText.toLowerCase();
+                    if (keyText.includes(searchKey)) {
+                        res.push(item);
+                        if (res.length >= limit) break;
+                    }
+                }
+                return res;
+            },
+            containsSearch(sub) {
+                return this.contains(sub, false, 50);
+            },
+            associate(phrase) {
+                const item = lookupKeyBlockByWord(phrase, true);
+                if (!item) return [];
+                return keywordList.filter(k => k.keyBlockIdx === item.keyBlockIdx);
+            }
+        };
+    }
+
+    function readFileRange(path, offset, length) {
+        if (!window.AndroidBridge || !window.AndroidBridge.readLocalFileChunk) return null;
+        const b64 = window.AndroidBridge.readLocalFileChunk(path, offset, length);
+        if (!b64) return null;
+        const bin = atob(b64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) {
+            bytes[i] = bin.charCodeAt(i);
+        }
+        return bytes;
+    }
+
+    function buildDictCache(dictInfo, parser) {
+        try {
+            if (!window.AndroidBridge || !window.AndroidBridge.saveDictCache) return;
+            const kw = parser.keywordList || [];
+            const ri = parser.recordInfoList || [];
+            if (kw.length === 0 || ri.length === 0) return;
+            if (parser.meta.encrypt === 1) return;
+            // Skip unsupported record compression (e.g. lzo)
+            if (window.AndroidBridge.readLocalFileChunk) {
+                const first = window.AndroidBridge.readLocalFileChunk(
+                    dictInfo.internalPath,
+                    (parser._recordBlockStartOffset || 0) + ri[0].packAccumulateOffset,
+                    4
+                );
+                if (!first) return;
+                const bin = atob(first);
+                const hex = Array.from(bin, c => c.charCodeAt(0).toString(16).padStart(2, '0')).join('');
+                if (hex !== '00000000' && hex !== '02000000') return;
+            }
+            const idx = {
+                v: 1,
+                enc: parser.meta.encoding || 'UTF-8',
+                encrypt: parser.meta.encrypt || 0,
+                rbs: parser._recordBlockStartOffset || 0,
+                k: kw.map(x => [x.keyText, x.recordStartOffset, x.recordEndOffset, x.keyBlockIdx]),
+                r: ri.map(x => [x.packSize, x.packAccumulateOffset, x.unpackSize, x.unpackAccumulatorOffset])
+            };
+            const json = JSON.stringify(idx);
+            window.AndroidBridge.saveDictCache(dictInfo.fileName + '.idx.json', json);
+            console.log('Dict cache saved:', (json.length / 1048576).toFixed(1) + 'MB');
+        } catch (e) {
+            console.error('Cache build error:', e);
+        }
     }
 
     function base64ToArrayBuffer(base64) {
@@ -433,15 +731,33 @@
         btnClear.classList.remove('hidden');
 
         if (!currentDict) {
-            if (allDicts.length === 0) {
-                definitionArea.innerHTML = '';
+            if (dictLoading) {
+                pendingSearchWord = word;
             } else {
                 definitionArea.innerHTML = '';
             }
             return;
         }
 
+        const candidates = buildLookupCandidates(word);
+        for (const candidate of candidates) {
+            const result = currentDict.lookup(candidate);
+            if (result && result.definition) {
+                if (candidate !== word) searchInput.value = candidate;
+                doSearchWord(candidate);
+                return;
+            }
+        }
         doSearchWord(word);
+    }
+
+    function buildLookupCandidates(word) {
+        const candidates = [word];
+        const lower = word.toLowerCase();
+        if (lower !== word && !candidates.includes(lower)) candidates.push(lower);
+        const cap = word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+        if (cap !== word && !candidates.includes(cap)) candidates.push(cap);
+        return candidates;
     }
 
     function doSearchWord(word) {
@@ -484,7 +800,7 @@
             currentKeywordIndex = -1;
 
             // Try fuzzy search
-            const fuzzyResults = currentDict.containsSearch(word);
+            const fuzzyResults = currentDict.containsSearch ? currentDict.containsSearch(word) : [];
             if (fuzzyResults.length > 0) {
                 definitionArea.innerHTML = `
                     <div class="no-result">

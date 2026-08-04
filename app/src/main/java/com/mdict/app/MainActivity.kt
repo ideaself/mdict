@@ -4,11 +4,16 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.graphics.Outline
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.util.Base64
 import android.util.Log
+import android.view.Gravity
+import android.view.View
+import android.view.ViewOutlineProvider
+import android.view.WindowInsets
 import android.webkit.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -19,10 +24,16 @@ import android.os.Build
 import androidx.activity.OnBackPressedCallback
 import java.io.File
 import java.io.FileOutputStream
+import java.io.RandomAccessFile
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
+    private lateinit var dimOverlay: View
+    private var pendingLookupWord: String? = null
+    private var webViewReady = false
+    private var lookupMode = false
+    private var launchedForLookup = false
 
     companion object {
         private const val TAG = "MDict"
@@ -32,10 +43,18 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
+        if (intent?.action == Intent.ACTION_PROCESS_TEXT) {
+            setTheme(R.style.Theme_MDict_Lookup)
+        }
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        checkPermissions()
+        dimOverlay = findViewById(R.id.dim_overlay)
+        dimOverlay.setOnClickListener { closeLookupWindow() }
+
+        if (intent?.action != Intent.ACTION_PROCESS_TEXT) {
+            checkPermissions()
+        }
 
         webView = findViewById(R.id.webview)
         webView.settings.apply {
@@ -73,10 +92,20 @@ class MainActivity : AppCompatActivity() {
                 if (url.startsWith("entry://")) {
                     // Handle internal dictionary links
                     val word = url.removePrefix("entry://")
-                    view?.evaluateJavascript("window.searchWord('${word.replace("'", "\\'")}')", null)
+                    view?.evaluateJavascript("window.searchWord(${jsEscape(word)})", null)
                     return true
                 }
                 return false
+            }
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                webViewReady = true
+                syncLookupModeToWeb()
+                pendingLookupWord?.let { word ->
+                    pendingLookupWord = null
+                    lookupWord(word)
+                }
             }
         }
 
@@ -84,6 +113,14 @@ class MainActivity : AppCompatActivity() {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
+                if (lookupMode) {
+                    if (webView.canGoBack()) {
+                        webView.goBack()
+                    } else {
+                        closeLookupWindow()
+                    }
+                    return
+                }
                 if (webView.canGoBack()) {
                     webView.goBack()
                 } else {
@@ -97,6 +134,123 @@ class MainActivity : AppCompatActivity() {
         })
 
         webView.loadUrl("file:///android_asset/index.html")
+
+        launchedForLookup = intent?.action == Intent.ACTION_PROCESS_TEXT
+        if (launchedForLookup) {
+            enterLookupMode()
+        }
+        handleLookupIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        when (intent.action) {
+            Intent.ACTION_PROCESS_TEXT -> {
+                if (!lookupMode) enterLookupMode()
+                handleLookupIntent(intent)
+            }
+            else -> {
+                exitedFullscreenFromPopup()
+            }
+        }
+    }
+
+    private fun exitedFullscreenFromPopup() {
+        if (lookupMode) exitLookupMode()
+    }
+
+    private fun enterLookupMode() {
+        if (lookupMode) return
+        val dm = resources.displayMetrics
+        val density = dm.density
+        val cardW = (dm.widthPixels * 0.92).toInt().coerceAtMost((420 * density).toInt())
+        val cardH = (dm.heightPixels * 0.60).toInt().coerceAtMost((520 * density).toInt())
+        dimOverlay.visibility = View.VISIBLE
+        webView.layoutParams = android.widget.FrameLayout.LayoutParams(cardW, cardH, Gravity.CENTER)
+        makeRoundedCorners()
+        hideStatusBar()
+        lookupMode = true
+        syncLookupModeToWeb()
+    }
+
+    private fun exitLookupMode() {
+        if (!lookupMode) return
+        dimOverlay.visibility = View.GONE
+        webView.layoutParams = android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+        )
+        restoreCorners()
+        showStatusBar()
+        lookupMode = false
+        syncLookupModeToWeb()
+    }
+
+    private fun closeLookupWindow() {
+        if (launchedForLookup) {
+            finish()
+        } else {
+            exitLookupMode()
+        }
+    }
+
+    private fun hideStatusBar() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.insetsController?.hide(WindowInsets.Type.statusBars())
+        } else {
+            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN
+        }
+    }
+
+    private fun showStatusBar() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.insetsController?.show(WindowInsets.Type.statusBars())
+        } else {
+            window.decorView.systemUiVisibility = 0
+        }
+    }
+
+    private fun makeRoundedCorners() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) return
+        val radius = 20 * resources.displayMetrics.density
+        webView.outlineProvider = object : ViewOutlineProvider() {
+            override fun getOutline(view: View?, outline: Outline?) {
+                if (view == null || outline == null) return
+                outline.setRoundRect(0, 0, view.width, view.height, radius)
+            }
+        }
+        webView.clipToOutline = true
+    }
+
+    private fun restoreCorners() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) return
+        webView.outlineProvider = ViewOutlineProvider.BACKGROUND
+        webView.clipToOutline = false
+    }
+
+    private fun syncLookupModeToWeb() {
+        if (::webView.isInitialized && webViewReady) {
+            webView.evaluateJavascript("window.setLookupMode($lookupMode)", null)
+        }
+    }
+
+    private fun handleLookupIntent(intent: Intent?) {
+        val text = intent?.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()?.trim()
+        if (text.isNullOrEmpty()) return
+        pendingLookupWord = text
+        if (webViewReady) {
+            pendingLookupWord = null
+            lookupWord(text)
+        }
+    }
+
+    private fun lookupWord(word: String) {
+        webView.evaluateJavascript("window.searchWord(${jsEscape(word)})", null)
+    }
+
+    private fun jsEscape(s: String): String {
+        return org.json.JSONObject.quote(s)
     }
 
     inner class WebViewBridge {
@@ -187,6 +341,78 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 Log.e(TAG, "Error reading local file: ${e.message}")
                 ""
+            }
+        }
+
+        @JavascriptInterface
+        fun getFileSize(filePath: String): Long {
+            return try {
+                File(filePath).length()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error getting file size: ${e.message}")
+                0L
+            }
+        }
+
+        @JavascriptInterface
+        fun readLocalFileChunk(filePath: String, offset: Long, length: Int): String {
+            return try {
+                val file = File(filePath)
+                if (!file.exists() || offset >= file.length()) return ""
+                RandomAccessFile(file, "r").use { raf ->
+                    raf.seek(offset)
+                    val bytes = ByteArray(length)
+                    val n = raf.read(bytes)
+                    if (n <= 0) {
+                        ""
+                    } else {
+                        Base64.encodeToString(
+                            if (n == bytes.size) bytes else bytes.copyOf(n),
+                            Base64.NO_WRAP
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error reading file chunk: ${e.message}")
+                ""
+            }
+        }
+
+        @JavascriptInterface
+        fun openFullApp() {
+            runOnUiThread { exitLookupMode() }
+        }
+
+        @JavascriptInterface
+        fun saveDictCache(fileName: String, content: String): Boolean {
+            return try {
+                val dir = File(filesDir, "caches")
+                dir.mkdirs()
+                File(dir, fileName).writeText(content)
+                true
+            } catch (e: Exception) {
+                Log.e(TAG, "Error saving dict cache: ${e.message}")
+                false
+            }
+        }
+
+        @JavascriptInterface
+        fun readDictCache(fileName: String): String {
+            return try {
+                val file = File(File(filesDir, "caches"), fileName)
+                if (!file.exists()) "" else file.readText()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error reading dict cache: ${e.message}")
+                ""
+            }
+        }
+
+        @JavascriptInterface
+        fun deleteDictCache(fileName: String) {
+            try {
+                File(File(filesDir, "caches"), fileName).delete()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error deleting dict cache: ${e.message}")
             }
         }
 

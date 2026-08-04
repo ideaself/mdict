@@ -505,6 +505,10 @@ html, body {
 }
 
 /* Bottom Nav */
+body.lookup-mode .bottom-nav {
+    display: none;
+}
+
 .bottom-nav {
     display: flex;
     position: fixed;
