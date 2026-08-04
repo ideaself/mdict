@@ -43,7 +43,7 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
-        if (intent?.action == Intent.ACTION_PROCESS_TEXT) {
+        if (isLookupAction(intent?.action)) {
             setTheme(R.style.Theme_MDict_Lookup)
         }
         super.onCreate(savedInstanceState)
@@ -52,7 +52,7 @@ class MainActivity : AppCompatActivity() {
         dimOverlay = findViewById(R.id.dim_overlay)
         dimOverlay.setOnClickListener { closeLookupWindow() }
 
-        if (intent?.action != Intent.ACTION_PROCESS_TEXT) {
+        if (!isLookupAction(intent?.action)) {
             checkPermissions()
         }
 
@@ -135,7 +135,7 @@ class MainActivity : AppCompatActivity() {
 
         webView.loadUrl("file:///android_asset/index.html")
 
-        launchedForLookup = intent?.action == Intent.ACTION_PROCESS_TEXT
+        launchedForLookup = isLookupAction(intent?.action)
         if (launchedForLookup) {
             enterLookupMode()
         }
@@ -146,7 +146,7 @@ class MainActivity : AppCompatActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         when (intent.action) {
-            Intent.ACTION_PROCESS_TEXT -> {
+            Intent.ACTION_PROCESS_TEXT, Intent.ACTION_SEND -> {
                 if (!lookupMode) enterLookupMode()
                 handleLookupIntent(intent)
             }
@@ -155,6 +155,9 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
+
+    private fun isLookupAction(action: String?): Boolean =
+        action == Intent.ACTION_PROCESS_TEXT || action == Intent.ACTION_SEND
 
     private fun exitedFullscreenFromPopup() {
         if (lookupMode) exitLookupMode()
@@ -236,13 +239,34 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleLookupIntent(intent: Intent?) {
-        val text = intent?.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()?.trim()
-        if (text.isNullOrEmpty()) return
-        pendingLookupWord = text
+        val word = extractLookupWord(intent) ?: return
+        pendingLookupWord = word
         if (webViewReady) {
             pendingLookupWord = null
-            lookupWord(text)
+            lookupWord(word)
         }
+    }
+
+    private fun extractLookupWord(intent: Intent?): String? {
+        if (intent == null) return null
+        return when (intent.action) {
+            Intent.ACTION_PROCESS_TEXT ->
+                intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()?.trim()
+            Intent.ACTION_SEND -> {
+                val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.trim() ?: return null
+                firstWord(text)
+            }
+            else -> null
+        }
+    }
+
+    private fun firstWord(text: String): String? {
+        var i = 0
+        while (i < text.length && !text[i].isLetterOrDigit()) i++
+        if (i >= text.length) return null
+        var j = i
+        while (j < text.length && (text[j].isLetterOrDigit() || text[j] == '-' || text[j] == '\'')) j++
+        return text.substring(i, j)
     }
 
     private fun lookupWord(word: String) {
