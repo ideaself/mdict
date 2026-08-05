@@ -2407,6 +2407,16 @@
         aboutPopup.classList.add('hidden');
     };
 
+    // Show the real installed version (from the APK) instead of a hardcoded one
+    if (window.AndroidBridge && window.AndroidBridge.getAppVersion) {
+        const v = window.AndroidBridge.getAppVersion();
+        if (v) {
+            document.querySelectorAll('#app-version-main, #app-version-about').forEach(el => {
+                el.textContent = v;
+            });
+        }
+    }
+
     // Start
     init();
     applyCustomCSS();

@@ -1091,6 +1091,15 @@ class MainActivity : AppCompatActivity() {
     inner class WebViewBridge {
 
         @JavascriptInterface
+        fun getAppVersion(): String {
+            return try {
+                packageManager.getPackageInfo(packageName, 0).versionName ?: ""
+            } catch (e: Exception) {
+                ""
+            }
+        }
+
+        @JavascriptInterface
         fun pickFile(mimeType: String) {
             val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE)
