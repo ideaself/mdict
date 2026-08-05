@@ -2475,11 +2475,30 @@
 
         contentEl.innerHTML = words.map(w => `
             <div class="word-list-item" onclick="window.learnJumpToWord('${escapeHtml(w.name)}')">
-                <div class="word-list-word">${escapeHtml(w.name)}</div>
-                <div class="word-list-trans">${escapeHtml((w.trans || []).slice(0, 2).join(', '))}</div>
+                <div class="word-list-main">
+                    <div class="word-list-word">${escapeHtml(w.name)}</div>
+                    <div class="word-list-trans">${escapeHtml((w.trans || []).slice(0, 2).join(', '))}</div>
+                </div>
+                <button class="word-list-lookup" title="查词典" onclick="event.stopPropagation(); window.learnLookupWord('${escapeHtml(w.name)}')">🔍</button>
             </div>
         `).join('');
     }
+
+    // Look up a word in the dictionary from the learn tab (card or word list)
+    window.learnLookupWord = function(word) {
+        const dictId = document.getElementById('dict-select').value;
+        if (!dictId) {
+            alert('请先在查询页选择词典');
+            return;
+        }
+        window.searchFromList(word, dictId);
+    };
+
+    window.learnLookup = function(event) {
+        if (event) event.stopPropagation();
+        if (learnIndex >= learnWords.length) return;
+        window.learnLookupWord(learnWords[learnIndex].name);
+    };
 
     window.learnJumpToWord = function(word) {
         const idx = learnWords.findIndex(w => w.name === word);

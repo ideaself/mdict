@@ -838,6 +838,15 @@ body.lookup-mode .bottom-nav {
     background: var(--primary-light);
 }
 
+.word-list-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
 .word-list-word {
     font-size: 15px;
     font-weight: 500;
@@ -852,6 +861,26 @@ body.lookup-mode .bottom-nav {
     text-overflow: ellipsis;
     white-space: nowrap;
     text-align: right;
+}
+
+.word-list-lookup {
+    flex-shrink: 0;
+    margin-left: 12px;
+    width: 30px;
+    height: 30px;
+    border: none;
+    border-radius: 50%;
+    background: var(--primary-light);
+    color: var(--primary-dark);
+    font-size: 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.word-list-lookup:active {
+    opacity: 0.7;
 }
 
 .learn-card-area {
@@ -911,6 +940,23 @@ body.lookup-mode .bottom-nav {
     line-height: 1.8;
     color: var(--text);
     text-align: left;
+}
+
+.btn-learn-lookup {
+    margin-top: 20px;
+    padding: 10px 24px;
+    border: none;
+    border-radius: 20px;
+    background: var(--primary);
+    color: #fff;
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.2s;
+}
+
+.btn-learn-lookup:active {
+    opacity: 0.8;
 }
 
 .learn-actions {
