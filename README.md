@@ -36,8 +36,21 @@
 ## 构建 Android 应用
 
 ```bash
-./gradlew assembleDebug
+./gradlew assembleRelease
 ```
+
+产物位于 `app/build/outputs/apk/release/MDict-release.apk`（已用 debug keystore 签名，可直接安装）。
+
+### 发布版本
+
+每次发布前在 `gradle.properties` 中递增版本号：
+
+```properties
+mdictVersionCode=2
+mdictVersionName=1.1.0
+```
+
+然后重新执行 `./gradlew assembleRelease`。
 
 ## 使用说明
 

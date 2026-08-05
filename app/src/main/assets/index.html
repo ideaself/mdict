@@ -124,6 +124,14 @@
         <!-- Settings Tab -->
         <div id="tab-settings" class="tab-content">
             <div class="settings-group">
+                <h3>显示设置</h3>
+                <select id="theme-mode" class="learn-search-input" style="height:44px">
+                    <option value="system">跟随系统</option>
+                    <option value="light">浅色模式</option>
+                    <option value="dark">深色模式</option>
+                </select>
+            </div>
+            <div class="settings-group">
                 <h3>词典管理</h3>
                 <div id="dict-manage-list" class="dict-manage-list">
                     <div class="empty-msg">暂无词典</div>
@@ -131,15 +139,16 @@
             </div>
             <div class="settings-group">
                 <h3>导入词典</h3>
-                <p class="settings-desc">支持导入 .mdx 词典文件</p>
-                <button id="btn-import-mdx" class="btn-primary">选择 MDX 文件</button>
+                <p class="settings-desc">选择 .mdx 词典文件导入；可同时多选配套的 .css 样式与 .mdd 资源文件一并导入（CSS / MDD 均为可选，没有则仅导入词典）</p>
+                <button id="btn-import-dict" class="btn-primary">选择词典文件（可多选）</button>
                 <div id="import-status" class="import-status hidden"></div>
             </div>
             <div class="settings-group">
-                <h3>导入 CSS</h3>
-                <p class="settings-desc">导入自定义 CSS 样式文件</p>
-                <button id="btn-import-css" class="btn-secondary">选择 CSS 文件</button>
-                <div id="css-import-status" class="import-status hidden"></div>
+                <h3>资源文件 (.mdd)</h3>
+                <p class="settings-desc">已导入的词典配套资源文件（图片、样式、发音）</p>
+                <div id="mdd-manage-list" class="dict-manage-list">
+                    <div class="empty-msg">暂无资源文件</div>
+                </div>
             </div>
             <div class="settings-group">
                 <h3>翻译设置</h3>
@@ -159,8 +168,15 @@
                 <div id="translate-status" class="import-status hidden"></div>
             </div>
             <div class="settings-group">
+                <h3>导出数据</h3>
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                    <button id="btn-export-fav" class="btn-secondary">导出收藏 (CSV)</button>
+                    <button id="btn-export-learn" class="btn-secondary">导出学习生词 (CSV)</button>
+                </div>
+            </div>
+            <div class="settings-group">
                 <h3>关于</h3>
-                <p class="settings-desc">MDict v1.0.0<br>基于 js-mdict 的词典应用</p>
+                <p class="settings-desc">MDict v1.1.0<br>基于 js-mdict 的词典应用</p>
                 <button id="btn-about" class="btn-secondary" style="margin-top:8px">了解更多</button>
             </div>
         </div>
@@ -176,7 +192,7 @@
                 <div class="about-body">
                     <div class="about-logo">📖</div>
                     <h2 class="about-app-name">MDict</h2>
-                    <p class="about-version">v1.0.0</p>
+                    <p class="about-version">v1.1.0</p>
                     <p class="about-desc">一款简洁高效的英语词典应用，支持 MDX 格式词典文件，内置学习模式和间隔重复复习系统，帮助你轻松记忆单词。</p>
                     <div class="about-features">
                         <div class="about-feature">

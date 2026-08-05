@@ -19,6 +19,8 @@
     let currentTranslateId = -1;
     let modelsRequestId = 0;
     let translateConfig = { engine: 'google', apiKey: '', baseUrl: '', model: '' };
+    let mddImportRequestId = 0;
+    const pendingMddImports = {};
 
     // DOM Elements
     const searchInput = document.getElementById('search-input');
@@ -37,8 +39,12 @@
         loadSavedData();
         setupEventListeners();
         refreshDictList();
+        renderMddList();
         loadTranslateConfig();
         initTranslateSettings();
+        initThemeSettings();
+        initExportButtons();
+        applyTheme();
     }
 
     function loadSavedData() {
@@ -89,8 +95,7 @@
         document.getElementById('btn-clear-history')?.addEventListener('click', clearHistory);
 
         // Settings
-        document.getElementById('btn-import-mdx')?.addEventListener('click', () => pickFile('*/*'));
-        document.getElementById('btn-import-css')?.addEventListener('click', () => pickFile('text/css,.css'));
+        document.getElementById('btn-import-dict')?.addEventListener('click', () => pickFile('*/*'));
 
         // Global functions
         window.onFilesPicked = onFilesPicked;
@@ -155,7 +160,12 @@
                     const reader = new FileReader();
                     reader.onload = () => {
                         const base64 = btoa(String.fromCharCode(...new Uint8Array(reader.result)));
-                        processFile(file.name, base64);
+                        processFile(file.name, base64).then(info => {
+                            showImportStatus('import-status', 'success',
+                                `导入成功: ${info.title} (${info.keywordCount} 词条)`);
+                        }).catch(e => {
+                            showImportStatus('import-status', 'error', `导入失败: ${e.message}`);
+                        });
                     };
                     reader.readAsArrayBuffer(file);
                 });
@@ -164,102 +174,260 @@
         }
     }
 
-    function onFilesPicked(uris) {
+    // Import: pick .mdx together with optional companion .css / .mdd files
+    async function onFilesPicked(uris) {
+        const mdxFiles = [];
+        const mddFiles = [];
+        const cssFiles = [];
+
         uris.forEach(uri => {
-            const fileName = window.AndroidBridge?.getFileName(uri) || 'unknown.mdx';
+            const fileName = window.AndroidBridge?.getFileName(uri) || 'unknown';
+            if (fileName.endsWith('.css')) cssFiles.push({ uri, fileName });
+            else if (fileName.endsWith('.mdd')) mddFiles.push({ uri, fileName });
+            else if (fileName.endsWith('.mdx')) mdxFiles.push({ uri, fileName });
+        });
 
-            if (fileName.endsWith('.css')) {
-                const base64 = window.AndroidBridge?.readFileAsBase64(uri) || '';
-                if (base64) processCSSFile(fileName, base64);
-                return;
+        if (mdxFiles.length === 0 && mddFiles.length === 0) {
+            showImportStatus('import-status', 'error',
+                '请选择 .mdx 词典文件（可同时多选配套的 .css 与 .mdd 文件）');
+            return;
+        }
+
+        showImportStatus('import-status', 'loading', '正在导入词典及配套文件...');
+
+        let dictCount = 0;
+        let mddCount = 0;
+        let cssApplied = false;
+        let errors = [];
+
+        // 1. CSS companions (optional)
+        cssFiles.forEach(({ uri, fileName }) => {
+            const base64 = window.AndroidBridge?.readFileAsBase64(uri) || '';
+            if (base64) {
+                processCSSFile(fileName, base64);
+                cssApplied = true;
             }
+        });
 
-            if (!fileName.endsWith('.mdx')) {
-                showImportStatus('import-status', 'error', '仅支持 .mdx 文件');
-                return;
-            }
-
-            // Save to internal storage first
-            showImportStatus('import-status', 'loading', '正在保存词典...');
+        // 2. Dictionaries (at least one .mdx required)
+        for (const { uri, fileName } of mdxFiles) {
             let internalPath = '';
             if (window.AndroidBridge) {
                 internalPath = window.AndroidBridge.saveFileToInternal(uri, fileName) || '';
             }
-
             const base64 = window.AndroidBridge?.readFileAsBase64(uri) || '';
             if (base64) {
-                processFile(fileName, base64, internalPath);
+                try {
+                    await processFile(fileName, base64, internalPath);
+                    dictCount++;
+                } catch (e) {
+                    errors.push(`${fileName}: ${e.message}`);
+                }
             }
-        });
+        }
+
+        // 3. MDD companions (optional)
+        for (const { uri, fileName } of mddFiles) {
+            let internalPath = '';
+            if (window.AndroidBridge) {
+                internalPath = window.AndroidBridge.saveFileToInternal(uri, fileName) || '';
+            }
+            // Native index building only needs the saved file path; skip reading the
+            // whole (possibly multi-GB) file as base64.
+            const useNative = !!(window.AndroidBridge && window.AndroidBridge.buildMddIndex && internalPath);
+            const base64 = useNative ? '' : (window.AndroidBridge?.readFileAsBase64(uri) || '');
+            if (useNative || base64) {
+                try {
+                    mddCount += await processMddFile(fileName, base64, internalPath);
+                } catch (e) {
+                    errors.push(`${fileName}: ${e.message}`);
+                }
+            }
+        }
+
+        if (dictCount === 0 && mddCount === 0 && !cssApplied) {
+            showImportStatus('import-status', 'error', `导入失败: ${errors.join('；') || '未知错误'}`);
+            return;
+        }
+
+        const parts = [];
+        if (dictCount > 0) parts.push(`导入成功: ${dictCount} 个词典`);
+        if (mddCount > 0) parts.push(`资源 ${mddCount} 项`);
+        if (cssApplied) parts.push('已应用 CSS');
+        if (errors.length > 0) parts.push(`部分文件失败: ${errors.join('；')}`);
+        showImportStatus('import-status', 'success', parts.join('，'));
+        refreshDictList();
     }
 
     function processFile(fileName, base64Data, internalPath) {
-        if (fileName.endsWith('.css')) {
-            processCSSFile(fileName, base64Data);
-            return;
-        }
-
-        if (!fileName.endsWith('.mdx')) {
-            showImportStatus('import-status', 'error', '仅支持 .mdx 文件');
-            return;
-        }
-
-        // Re-import invalidates any cached index for this file
-        if (window.AndroidBridge && window.AndroidBridge.deleteDictCache) {
-            window.AndroidBridge.deleteDictCache(fileName + '.idx.json');
-        }
-
-        showImportStatus('import-status', 'loading', '正在解析词典...');
-
-        setTimeout(() => {
-            try {
-                const binaryStr = atob(base64Data);
-                const bytes = new Uint8Array(binaryStr.length);
-                for (let i = 0; i < binaryStr.length; i++) {
-                    bytes[i] = binaryStr.charCodeAt(i);
-                }
-
-                console.log('File size:', bytes.length, 'bytes');
-
-                // Use js-mdict library
-                MDictLib.setBuffer(bytes.buffer);
-                const parser = new MDictLib.MDX('dummy');
-
-                const info = {
-                    title: parser.header?.Title || fileName.replace('.mdx',''),
-                    keywordCount: parser.keywordList?.length || 0,
-                    version: parser.meta?.version || 0,
-                    encoding: parser.meta?.encoding || 'UTF-8'
-                };
-
-                console.log('Parse complete:', info);
-
-                const dictId = fileName.replace('.mdx', '');
-                const dictData = {
-                    id: dictId,
-                    name: info.title || fileName,
-                    fileName: fileName,
-                    keywordCount: info.keywordCount,
-                    version: info.version,
-                    encoding: info.encoding,
-                    internalPath: internalPath || ''
-                };
-
-                allDicts = allDicts.filter(d => d.id !== dictId);
-                allDicts.push(dictData);
-                localStorage.setItem('mdict_dicts', JSON.stringify(allDicts));
-
-                window._dictParsers = window._dictParsers || {};
-                window._dictParsers[dictId] = parser;
-
-                showImportStatus('import-status', 'success',
-                    `导入成功: ${info.title} (${info.keywordCount} 词条)`);
-                refreshDictList();
-            } catch (e) {
-                console.error('Parse error:', e);
-                showImportStatus('import-status', 'error', `解析失败: ${e.message}`);
+        return new Promise((resolve, reject) => {
+            if (fileName.endsWith('.css')) {
+                processCSSFile(fileName, base64Data);
+                resolve({ type: 'css' });
+                return;
             }
-        }, 100);
+
+            if (fileName.endsWith('.mdd')) {
+                processMddFile(fileName, base64Data, internalPath).then(resolve, reject);
+                return;
+            }
+
+            if (!fileName.endsWith('.mdx')) {
+                reject(new Error('仅支持 .mdx / .mdd / .css 文件'));
+                return;
+            }
+
+            // Re-import invalidates any cached index for this file
+            if (window.AndroidBridge && window.AndroidBridge.deleteDictCache) {
+                window.AndroidBridge.deleteDictCache(fileName + '.idx.json');
+            }
+
+            showImportStatus('import-status', 'loading', '正在解析词典...');
+
+            setTimeout(() => {
+                try {
+                    const binaryStr = atob(base64Data);
+                    const bytes = new Uint8Array(binaryStr.length);
+                    for (let i = 0; i < binaryStr.length; i++) {
+                        bytes[i] = binaryStr.charCodeAt(i);
+                    }
+
+                    console.log('File size:', bytes.length, 'bytes');
+
+                    // Use js-mdict library
+                    MDictLib.setBuffer(bytes.buffer);
+                    const parser = new MDictLib.MDX('dummy');
+
+                    const info = {
+                        title: parser.header?.Title || fileName.replace('.mdx',''),
+                        keywordCount: parser.keywordList?.length || 0,
+                        version: parser.meta?.version || 0,
+                        encoding: parser.meta?.encoding || 'UTF-8'
+                    };
+
+                    console.log('Parse complete:', info);
+
+                    const dictId = fileName.replace('.mdx', '');
+                    const dictData = {
+                        id: dictId,
+                        name: info.title || fileName,
+                        fileName: fileName,
+                        keywordCount: info.keywordCount,
+                        version: info.version,
+                        encoding: info.encoding,
+                        internalPath: internalPath || ''
+                    };
+
+                    allDicts = allDicts.filter(d => d.id !== dictId);
+                    allDicts.push(dictData);
+                    localStorage.setItem('mdict_dicts', JSON.stringify(allDicts));
+
+                    window._dictParsers = window._dictParsers || {};
+                    window._dictParsers[dictId] = parser;
+
+                    refreshDictList();
+                    resolve(info);
+                } catch (e) {
+                    console.error('Parse error:', e);
+                    reject(e);
+                }
+            }, 100);
+        });
+    }
+
+    function processMddFile(fileName, base64Data, internalPath) {
+        // Fast path: native side builds the index by reading only the file header +
+        // key blocks (front of file), so multi-GB .mdd files import in seconds.
+        if (window.AndroidBridge && window.AndroidBridge.buildMddIndex && internalPath) {
+            return new Promise((resolve, reject) => {
+                const requestId = ++mddImportRequestId;
+                pendingMddImports[requestId] = { resolve, reject };
+                window.AndroidBridge.buildMddIndex(internalPath, fileName, requestId);
+            });
+        }
+        // Fallback (browser / no native bridge): slow JS parse of the whole file
+        return processMddFileSlow(fileName, base64Data, internalPath);
+    }
+
+    window.onMddIndexProgress = function(requestId, pct) {
+        if (!pendingMddImports[requestId]) return;
+        showImportStatus('import-status', 'loading', `正在解析资源文件... ${pct}%`);
+    };
+
+    window.onMddIndexDone = function(requestId, json) {
+        const pending = pendingMddImports[requestId];
+        if (!pending) return;
+        delete pendingMddImports[requestId];
+        let result = null;
+        try {
+            result = typeof json === 'string' ? JSON.parse(json) : json;
+        } catch (e) {
+            result = { ok: false, error: '解析返回数据失败' };
+        }
+        if (result.ok) {
+            pending.resolve(result.count || 0);
+        } else {
+            pending.reject(new Error(result.error || '资源文件解析失败'));
+        }
+    };
+
+    function processMddFileSlow(fileName, base64Data, internalPath) {
+        return new Promise((resolve, reject) => {
+            showImportStatus('import-status', 'loading', '正在解析资源文件...');
+
+            setTimeout(() => {
+                try {
+                    const binaryStr = atob(base64Data);
+                    const bytes = new Uint8Array(binaryStr.length);
+                    for (let i = 0; i < binaryStr.length; i++) {
+                        bytes[i] = binaryStr.charCodeAt(i);
+                    }
+
+                    MDictLib.setBuffer(bytes.buffer);
+                    // 'dummy.mdd' suffix is required: js-mdict derives the file type from the
+                    // filename, and a plain 'dummy' is treated as MDX (wrong key sizes for MDD)
+                    const parser = new MDictLib.MDD('dummy.mdd');
+                    const kw = parser.keywordList || [];
+                    const ri = parser.recordInfoList || [];
+                    if (kw.length === 0 || ri.length === 0) {
+                        reject(new Error('资源文件为空或解析失败'));
+                        return;
+                    }
+
+                    // Build resource index cache (used by the native side to read
+                    // resources on demand without parsing the whole mdd)
+                    const idx = {
+                        v: 1,
+                        enc: parser.meta.encoding || 'UTF-8',
+                        encrypt: parser.meta.encrypt || 0,
+                        rbs: parser._recordBlockStartOffset || 0,
+                        k: kw.map(x => [x.keyText, x.recordStartOffset, x.recordEndOffset, x.keyBlockIdx]),
+                        r: ri.map(x => [x.packSize, x.packAccumulateOffset, x.unpackSize, x.unpackAccumulatorOffset])
+                    };
+                    if (window.AndroidBridge && window.AndroidBridge.saveDictCache) {
+                        window.AndroidBridge.saveDictCache(fileName + '.idx.json', JSON.stringify(idx));
+                    }
+
+                    // Register in the mdd registry
+                    if (window.AndroidBridge && window.AndroidBridge.readDictCache) {
+                        let registry = [];
+                        try {
+                            const existing = window.AndroidBridge.readDictCache('mdd_registry.json');
+                            if (existing) registry = JSON.parse(existing);
+                        } catch (e) {}
+                        registry = registry.filter(m => m.name !== fileName);
+                        registry.push({ name: fileName, path: internalPath || '' });
+                        window.AndroidBridge.saveDictCache('mdd_registry.json', JSON.stringify(registry));
+                    }
+
+                    renderMddList();
+                    resolve(kw.length);
+                } catch (e) {
+                    console.error('Mdd parse error:', e);
+                    reject(e);
+                }
+            }, 100);
+        });
     }
 
     function processCSSFile(fileName, base64Data) {
@@ -268,9 +436,8 @@
             customCSS = css;
             applyCustomCSS();
             saveData();
-            showImportStatus('css-import-status', 'success', `CSS 导入成功: ${fileName}`);
         } catch (e) {
-            showImportStatus('css-import-status', 'error', `CSS 导入失败: ${e.message}`);
+            console.error('CSS import failed:', e);
         }
     }
 
@@ -281,7 +448,13 @@
             styleEl.id = 'custom-dict-css';
             document.head.appendChild(styleEl);
         }
-        styleEl.textContent = customCSS;
+        // Appended after the dictionary css so these overrides win: sound buttons
+        // must never show css-drawn glyphs (e.g. the 'θ' fallback icon).
+        styleEl.textContent = customCSS + `
+            .def-content a[href^="sound://"] { background: none !important; }
+            .def-content a[href^="sound://"]::before,
+            .def-content a[href^="sound://"]::after { content: none !important; }
+        `;
     }
 
     function showImportStatus(elementId, type, message) {
@@ -320,10 +493,17 @@
             if (allDicts.length === 0) {
                 manageList.innerHTML = '<div class="empty-msg">暂无词典</div>';
             } else {
+                const enabled = getEnabledDicts();
                 manageList.innerHTML = allDicts.map(dict => `
                     <div class="dict-manage-item">
                         <div class="dict-manage-info">
-                            <div class="dict-manage-name">${escapeHtml(dict.name)}</div>
+                            <div class="dict-manage-name">
+                                <label class="dict-enable" title="启用多词典同时查询">
+                                    <input type="checkbox" ${enabled.includes(dict.id) ? 'checked' : ''}
+                                        onchange="window.toggleDictEnabled('${dict.id}', this.checked)">
+                                </label>
+                                ${escapeHtml(dict.name)}
+                            </div>
                             <div class="dict-manage-size">${dict.keywordCount} 词条 | v${dict.version}</div>
                         </div>
                         <button class="btn-delete" onclick="window.deleteDict('${dict.id}')">删除</button>
@@ -342,8 +522,82 @@
         } catch (e) {}
     }
 
-    window.deleteDict = function(dictId) {
-        if (!confirm('确定删除此词典?')) return;
+    function readMddRegistry() {
+        try {
+            if (window.AndroidBridge && window.AndroidBridge.readDictCache) {
+                const existing = window.AndroidBridge.readDictCache('mdd_registry.json');
+                if (existing) return JSON.parse(existing);
+            }
+        } catch (e) {}
+        return [];
+    }
+
+    function saveMddRegistry(registry) {
+        try {
+            if (window.AndroidBridge && window.AndroidBridge.saveDictCache) {
+                window.AndroidBridge.saveDictCache('mdd_registry.json', JSON.stringify(registry));
+            }
+        } catch (e) {}
+    }
+
+    function renderMddList() {
+        const list = document.getElementById('mdd-manage-list');
+        if (!list) return;
+        const registry = readMddRegistry();
+        if (registry.length === 0) {
+            list.innerHTML = '<div class="empty-msg">暂无资源文件</div>';
+            return;
+        }
+        list.innerHTML = registry.map(m => `
+            <div class="dict-manage-item">
+                <div class="dict-manage-info">
+                    <div class="dict-manage-name">${escapeHtml(m.name)}</div>
+                    <div class="dict-manage-size">MDD 资源</div>
+                </div>
+                <button class="btn-delete" onclick="window.deleteMdd('${escapeHtml(m.name)}')">删除</button>
+            </div>
+        `).join('');
+    }
+
+    window.deleteMdd = function(fileName) {
+        if (!confirm('确定删除资源文件 ' + fileName + '?')) return;
+        let registry = readMddRegistry().filter(m => m.name !== fileName);
+        saveMddRegistry(registry);
+        if (window.AndroidBridge && window.AndroidBridge.deleteDictCache) {
+            window.AndroidBridge.deleteDictCache(fileName + '.idx.json');
+            window.AndroidBridge.deleteDictFile(fileName);
+        }
+        renderMddList();
+    };
+
+    function getEnabledDicts() {
+        try {
+            const saved = localStorage.getItem('mdict_enabled_dicts');
+            if (saved) return JSON.parse(saved);
+        } catch (e) {}
+        return allDicts.map(d => d.id);
+    }
+
+    function setDictEnabled(id, enabled) {
+        let ids = getEnabledDicts();
+        if (enabled) {
+            if (!ids.includes(id)) ids.push(id);
+        } else {
+            ids = ids.filter(x => x !== id);
+        }
+        localStorage.setItem('mdict_enabled_dicts', JSON.stringify(ids));
+    }
+
+    function dictName(id) {
+        const d = allDicts.find(x => x.id === id);
+        return d ? (d.name || id) : id;
+    }
+
+    window.toggleDictEnabled = function(id, enabled) {
+        setDictEnabled(id, enabled);
+    };
+
+    window.deleteDict = function(dictId) {        if (!confirm('确定删除此词典?')) return;
         const dictInfo = allDicts.find(d => d.id === dictId);
         if (dictInfo && window.AndroidBridge && window.AndroidBridge.deleteDictCache) {
             window.AndroidBridge.deleteDictCache(dictInfo.fileName + '.idx.json');
@@ -352,6 +606,9 @@
         localStorage.setItem('mdict_dicts', JSON.stringify(allDicts));
         if (window._dictParsers) {
             delete window._dictParsers[dictId];
+        }
+        if (window._dictBuffers) {
+            delete window._dictBuffers[dictId];
         }
         if (currentDict && currentDict.id === dictId) {
             currentDict = null;
@@ -378,9 +635,10 @@
             return;
         }
 
-        // Parser already in memory and buffer matches this file -> instant
+        // Parser + buffer already in memory -> instant
         if (window._dictParsers && window._dictParsers[dictId] &&
-            window._currentBufferPath === dictInfo.internalPath) {
+            window._dictBuffers && window._dictBuffers[dictId]) {
+            MDictLib.setBuffer(window._dictBuffers[dictId]);
             currentDict = window._dictParsers[dictId];
             currentDictName = dictId;
             finishDictLoad();
@@ -417,7 +675,8 @@
                         const parser = new MDictLib.MDX('dummy');
                         window._dictParsers = window._dictParsers || {};
                         window._dictParsers[dictId] = parser;
-                        window._currentBufferPath = dictInfo.internalPath;
+                        window._dictBuffers = window._dictBuffers || {};
+                        window._dictBuffers[dictId] = buffer;
                         currentDict = parser;
                         currentDictName = dictId;
                         finishDictLoad();
@@ -437,11 +696,13 @@
         if (dictInfo.internalPath && window.AndroidBridge) {
             const base64 = window.AndroidBridge.readLocalFile(dictInfo.internalPath);
             if (base64) {
-                MDictLib.setBuffer(base64ToArrayBuffer(base64));
+                const buffer = base64ToArrayBuffer(base64);
+                MDictLib.setBuffer(buffer);
                 const parser = new MDictLib.MDX('dummy');
                 window._dictParsers = window._dictParsers || {};
                 window._dictParsers[dictId] = parser;
-                window._currentBufferPath = dictInfo.internalPath;
+                window._dictBuffers = window._dictBuffers || {};
+                window._dictBuffers[dictId] = buffer;
                 currentDict = parser;
                 currentDictName = dictId;
                 finishDictLoad();
@@ -454,6 +715,57 @@
     }
 
     const READ_CHUNK_SIZE = 2 * 1024 * 1024;
+
+    // Load a dictionary in the background without switching the active dict.
+    async function ensureDictLoaded(dictId, onDone) {
+        const dictInfo = allDicts.find(d => d.id === dictId);
+        if (!dictInfo) {
+            onDone?.();
+            return;
+        }
+        if (window._dictParsers && window._dictParsers[dictId]) {
+            onDone?.();
+            return;
+        }
+        // Index cache first (fast, no big buffer)
+        if (dictInfo.internalPath && window.AndroidBridge && window.AndroidBridge.readDictCache) {
+            try {
+                const cacheJson = window.AndroidBridge.readDictCache(dictInfo.fileName + '.idx.json');
+                if (cacheJson) {
+                    const idx = JSON.parse(cacheJson);
+                    window._dictParsers = window._dictParsers || {};
+                    window._dictParsers[dictId] = createLightParser(idx, dictInfo.internalPath);
+                    onDone?.();
+                    return;
+                }
+            } catch (e) {
+                console.error('Dict cache load error:', e);
+            }
+        }
+        // Full chunked load (silent)
+        if (dictInfo.internalPath && window.AndroidBridge && window.AndroidBridge.readLocalFileChunk) {
+            const size = window.AndroidBridge.getFileSize(dictInfo.internalPath);
+            if (size > 0) {
+                const buffer = await readFileChunks(dictInfo.internalPath, size, () => {});
+                if (buffer) {
+                    try {
+                        MDictLib.setBuffer(buffer);
+                        const parser = new MDictLib.MDX('dummy');
+                        window._dictParsers = window._dictParsers || {};
+                        window._dictParsers[dictId] = parser;
+                        window._dictBuffers = window._dictBuffers || {};
+                        window._dictBuffers[dictId] = buffer;
+                        setTimeout(() => buildDictCache(dictInfo, parser), 100);
+                        onDone?.();
+                        return;
+                    } catch (e) {
+                        console.error('Parse error:', e);
+                    }
+                }
+            }
+        }
+        onDone?.();
+    }
 
     async function readFileChunks(path, size, onProgress) {
         const bytes = new Uint8Array(size);
@@ -734,7 +1046,10 @@
         searchWord(word);
     }
 
+    let currentSearchWord = null;
+
     function searchWord(word) {
+        currentSearchWord = word;
         searchInput.value = word;
         suggestionList.classList.add('hidden');
         btnClear.classList.remove('hidden');
@@ -760,13 +1075,197 @@
         doSearchWord(word);
     }
 
+    // ---- Inflection lemmatization (offline) ----
+
+    const IRREGULAR_FORMS = {
+        went: 'go', gone: 'go', goes: 'go', going: 'go',
+        ran: 'run', running: 'run', runs: 'run',
+        ate: 'eat', eaten: 'eat', eats: 'eat', eating: 'eat',
+        saw: 'see', seen: 'see', sees: 'see', seeing: 'see',
+        took: 'take', taken: 'take', takes: 'take', taking: 'take',
+        gave: 'give', given: 'give', gives: 'give', giving: 'give',
+        came: 'come', comes: 'come', coming: 'come',
+        made: 'make', makes: 'make', making: 'make',
+        said: 'say', says: 'say', saying: 'say',
+        got: 'get', gotten: 'get', gets: 'get', getting: 'get',
+        found: 'find', finds: 'find', finding: 'find',
+        thought: 'think', thinks: 'think', thinking: 'think',
+        knew: 'know', known: 'know', knows: 'know', knowing: 'know',
+        had: 'have', has: 'have', having: 'have',
+        was: 'be', were: 'be', been: 'be', being: 'be', am: 'be', is: 'be', are: 'be',
+        did: 'do', does: 'do', done: 'do', doing: 'do',
+        wrote: 'write', written: 'write', writes: 'write', writing: 'write',
+        spoke: 'speak', spoken: 'speak', speaks: 'speak', speaking: 'speak',
+        broke: 'break', broken: 'break', breaks: 'break', breaking: 'break',
+        drove: 'drive', driven: 'drive', drives: 'drive', driving: 'drive',
+        began: 'begin', begun: 'begin', begins: 'begin', beginning: 'begin',
+        brought: 'bring', brings: 'bring', bringing: 'bring',
+        bought: 'buy', buys: 'buy', buying: 'buy',
+        caught: 'catch', catches: 'catch', catching: 'catch',
+        felt: 'feel', feels: 'feel', feeling: 'feel',
+        held: 'hold', holds: 'hold', holding: 'hold',
+        kept: 'keep', keeps: 'keep', keeping: 'keep',
+        left: 'leave', leaves: 'leave', leaving: 'leave',
+        lost: 'lose', loses: 'lose', losing: 'lose',
+        met: 'meet', meets: 'meet', meeting: 'meet',
+        paid: 'pay', pays: 'pay', paying: 'pay',
+        puts: 'put', putting: 'put',
+        reads: 'read', reading: 'read',
+        sent: 'send', sends: 'send', sending: 'send',
+        sat: 'sit', sits: 'sit', sitting: 'sit',
+        slept: 'sleep', sleeps: 'sleep', sleeping: 'sleep',
+        stood: 'stand', stands: 'stand', standing: 'stand',
+        taught: 'teach', teaches: 'teach', teaching: 'teach',
+        told: 'tell', tells: 'tell', telling: 'tell',
+        understood: 'understand', understands: 'understand', understanding: 'understand',
+        won: 'win', wins: 'win', winning: 'win',
+        flew: 'fly', flown: 'fly', flies: 'fly', flying: 'fly',
+        grew: 'grow', grown: 'grow', grows: 'grow', growing: 'grow',
+        threw: 'throw', thrown: 'throw', throws: 'throw', throwing: 'throw',
+        drank: 'drink', drunk: 'drink', drinks: 'drink', drinking: 'drink',
+        sang: 'sing', sung: 'sing', sings: 'sing', singing: 'sing',
+        swam: 'swim', swum: 'swim', swims: 'swim', swimming: 'swim',
+        rode: 'ride', ridden: 'ride', rides: 'ride', riding: 'ride',
+        rose: 'rise', risen: 'rise', rises: 'rise', rising: 'rise',
+        chose: 'choose', chosen: 'choose', chooses: 'choose', choosing: 'choose',
+        forgot: 'forget', forgotten: 'forget', forgets: 'forget', forgetting: 'forget',
+        lent: 'lend', lends: 'lend', lending: 'lend',
+        spent: 'spend', spends: 'spend', spending: 'spend',
+        built: 'build', builds: 'build', building: 'build',
+        sold: 'sell', sells: 'sell', selling: 'sell',
+        shot: 'shoot', shoots: 'shoot', shooting: 'shoot',
+        wore: 'wear', worn: 'wear', wears: 'wear', wearing: 'wear',
+        meant: 'mean', means: 'mean', meaning: 'mean',
+        heard: 'hear', hears: 'hear', hearing: 'hear',
+        led: 'lead', leads: 'lead', leading: 'lead',
+        fought: 'fight', fights: 'fight', fighting: 'fight',
+        drew: 'draw', drawn: 'draw', draws: 'draw', drawing: 'draw',
+        fell: 'fall', fallen: 'fall', falls: 'fall', falling: 'fall',
+        bent: 'bend', bends: 'bend', bending: 'bend',
+        hid: 'hide', hidden: 'hide', hides: 'hide', hiding: 'hide',
+        hung: 'hang', hangs: 'hang', hanging: 'hang',
+        lit: 'light', lights: 'light', lighting: 'light',
+        grew: 'grow', grows: 'grow', growing: 'grow'
+    };
+
+    function inflectLemmas(word) {
+        const w = word.toLowerCase();
+        const res = [];
+        if (IRREGULAR_FORMS[w]) res.push(IRREGULAR_FORMS[w]);
+        const len = w.length;
+        if (len < 4) return res;
+        // plural -ies / -es / -s
+        if (w.endsWith('ies') && len > 4) res.push(w.slice(0, -3) + 'y');
+        else if (w.endsWith('es')) res.push(w.slice(0, -2));
+        else if (w.endsWith('s') && !w.endsWith('ss')) res.push(w.slice(0, -1));
+        // -ying -> -y
+        if (w.endsWith('ying') && len > 5) res.push(w.slice(0, -3) + 'y');
+        // -ing
+        if (w.endsWith('ing') && len > 5) {
+            const base = w.slice(0, -3);
+            res.push(base);
+            if (base.length > 2 && base[base.length - 1] === base[base.length - 2]) {
+                res.push(base.slice(0, -1));
+            }
+            res.push(base + 'e');
+        }
+        // -ied / -ed
+        if (w.endsWith('ied') && len > 4) res.push(w.slice(0, -3) + 'y');
+        else if (w.endsWith('ed') && len > 4) {
+            const base = w.slice(0, -2);
+            res.push(base);
+            if (base.length > 2 && base[base.length - 1] === base[base.length - 2]) {
+                res.push(base.slice(0, -1));
+            }
+            res.push(base + 'e');
+        }
+        // -ier / -iest / -er / -est
+        if (w.endsWith('ier') && len > 4) res.push(w.slice(0, -3) + 'y');
+        if (w.endsWith('iest') && len > 5) res.push(w.slice(0, -4) + 'y');
+        if (w.endsWith('er') && len > 4) res.push(w.slice(0, -2));
+        if (w.endsWith('est') && len > 5) res.push(w.slice(0, -3));
+        return res.filter(Boolean);
+    }
+
     function buildLookupCandidates(word) {
         const candidates = [word];
         const lower = word.toLowerCase();
         if (lower !== word && !candidates.includes(lower)) candidates.push(lower);
         const cap = word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
         if (cap !== word && !candidates.includes(cap)) candidates.push(cap);
+        for (const lemma of inflectLemmas(word)) {
+            if (!candidates.includes(lemma)) candidates.push(lemma);
+        }
         return candidates;
+    }
+
+    // ---- Theme ----
+
+    function applyTheme() {
+        const mode = localStorage.getItem('mdict_theme') || 'system';
+        const dark = mode === 'dark' ||
+            (mode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        document.body.classList.toggle('dark', dark);
+        if (window.AndroidBridge && window.AndroidBridge.setDarkMode) {
+            window.AndroidBridge.setDarkMode(dark);
+        }
+    }
+
+    function initThemeSettings() {
+        const select = document.getElementById('theme-mode');
+        if (!select) return;
+        select.value = localStorage.getItem('mdict_theme') || 'system';
+        select.addEventListener('change', () => {
+            localStorage.setItem('mdict_theme', select.value);
+            applyTheme();
+        });
+        if (window.matchMedia) {
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+        }
+    }
+
+    // ---- Export ----
+
+    function exportFavorites() {
+        if (favorites.length === 0) {
+            alert('暂无收藏单词');
+            return;
+        }
+        const rows = [['word', 'dict', 'time']];
+        favorites.forEach(f => {
+            rows.push([f.word, (f.dictId || '').replace(/,/g, ' '), new Date(f.time).toISOString()]);
+        });
+        const csv = '\uFEFF' + rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+        if (window.AndroidBridge && window.AndroidBridge.saveTextToFile) {
+            window.AndroidBridge.saveTextToFile(csv, 'mdict_favorites.csv');
+        }
+    }
+
+    function exportLearnWords() {
+        const rows = [['book', 'word', 'status']];
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (!key || !key.startsWith('learn_') || key === 'learn_last_book') continue;
+            const book = key.replace('learn_', '');
+            try {
+                const data = JSON.parse(localStorage.getItem(key) || '{}');
+                (data.known || []).forEach(w => rows.push([book, w, 'known']));
+                (data.unknown || []).forEach(w => rows.push([book, w, 'unknown']));
+            } catch (e) {}
+        }
+        if (rows.length === 1) {
+            alert('暂无学习记录');
+            return;
+        }
+        const csv = '\uFEFF' + rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+        if (window.AndroidBridge && window.AndroidBridge.saveTextToFile) {
+            window.AndroidBridge.saveTextToFile(csv, 'mdict_learn_words.csv');
+        }
+    }
+
+    function initExportButtons() {
+        document.getElementById('btn-export-fav')?.addEventListener('click', exportFavorites);
+        document.getElementById('btn-export-learn')?.addEventListener('click', exportLearnWords);
     }
 
     // ---- Sentence translation ----
@@ -941,6 +1440,44 @@
 
     function doSearchWord(word) {
         const result = currentDict.lookup(word);
+
+        // Look up the same word in other enabled dictionaries
+        const extraResults = [];
+        const mainId = currentDictName;
+        const enabled = getEnabledDicts();
+        const loadedIds = new Set(Object.keys(window._dictParsers || {}));
+        for (const id of enabled) {
+            if (id === mainId) continue;
+            // Lazily load dictionaries that are enabled but not loaded yet;
+            // when ready, re-run the search if the word hasn't changed.
+            if (!loadedIds.has(id)) {
+                ensureDictLoaded(id, () => {
+                    if (currentSearchWord !== word) return;
+                    const mainBuff = window._dictBuffers && window._dictBuffers[mainId];
+                    if (mainBuff) MDictLib.setBuffer(mainBuff);
+                    doSearchWord(word);
+                });
+                continue;
+            }
+            const parser = window._dictParsers[id];
+            const buff = window._dictBuffers && window._dictBuffers[id];
+            if (buff) MDictLib.setBuffer(buff);
+            const r = parser.lookup(word);
+            if (r && r.definition) {
+                extraResults.push({ id: id, name: dictName(id), html: r.definition });
+            }
+        }
+        // Switch the global buffer back to the main dictionary
+        const mainBuff = window._dictBuffers && window._dictBuffers[mainId];
+        if (mainBuff) MDictLib.setBuffer(mainBuff);
+
+        const extraHtml = extraResults.map(ex => `
+            <div class="dict-extra-block">
+                <div class="dict-extra-name">${escapeHtml(ex.name)}</div>
+                <div class="def-content">${fixResourcePaths(ex.html)}</div>
+            </div>
+        `).join('');
+
         if (result) {
             currentDefinition = result;
 
@@ -971,8 +1508,20 @@
                     <button class="btn-nav" onclick="navWord(1)" ${currentKeywordIndex >= keywords.length - 1 ? 'disabled' : ''}>下一个 →</button>
                 </div>
                 <div class="def-content">${defHtml}</div>
+                ${extraHtml}
             `;
 
+            definitionArea.scrollTop = 0;
+        } else if (extraResults.length > 0) {
+            // Main dictionary has no match, but others do
+            currentDefinition = null;
+            currentKeywordIndex = -1;
+            definitionArea.innerHTML = `
+                <div class="no-result">
+                    <div class="emoji">🔍</div>
+                    <p>"${escapeHtml(word)}" 未收录于「${escapeHtml(dictName(mainId))}」，以下词典有收录:</p>
+                </div>
+                ${extraHtml}`;
             definitionArea.scrollTop = 0;
         } else {
             currentDefinition = null;
@@ -1004,14 +1553,30 @@
         }
     }
 
+    const SPEAKER_ICON = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='20' height='20' fill='%23F9A825'%3E%3Cpath d='M3 9v6h4l5 5V4L7 9H3z'/%3E%3Cpath d='M16.5 12A4.5 4.5 0 0 0 14 7.97v8.05A4.5 4.5 0 0 0 16.5 12z'/%3E%3C/svg%3E";
+
     function fixResourcePaths(html) {
         if (!html) return html;
-        // Fix img src and link href for local resources
-        html = html.replace(/src="([^"]+)"/g, (match, path) => {
-            if (path.startsWith('http') || path.startsWith('data:')) return match;
-            return `src="file:///android_asset/dict_res/${path}"`;
+        // OALD-style sound buttons are empty <a href="sound://..."> links whose icon
+        // is drawn by the dictionary css (often a bare glyph like 'θ'); inject a
+        // real speaker icon instead and suppress the css glyph.
+        html = html.replace(/<a\s+([^>]*href="sound:\/\/[^"]*"[^>]*)>([\s\S]*?)<\/a>/gi, (m, attrs, inner) => {
+            const img = `<img src="${SPEAKER_ICON}" alt="" style="vertical-align:middle;pointer-events:none">`;
+            return `<a ${attrs}>${img}${inner}</a>`;
         });
-        html = html.replace(/href="sound:\/\//g, 'href="');
+        // Sound sources render as a speaker icon; tapping the wrapping link
+        // plays audio via the sound:// handler
+        html = html.replace(/src="sound:\/\/([^"]+)"/g, `src="${SPEAKER_ICON}"`);
+        // Route relative resources (images, css, audio...) to the mdd loader
+        html = html.replace(/(src|href)="([^"]+)"/g, (match, attr, path) => {
+            if (path.startsWith('http') || path.startsWith('data:') ||
+                path.startsWith('file:') || path.startsWith('#') ||
+                path.startsWith('javascript:') || path.startsWith('sound://') ||
+                path.startsWith('entry://')) {
+                return match;
+            }
+            return `${attr}="file:///mdd_res/${encodeURIComponent(path)}"`;
+        });
         html = html.replace(/href="entry:\/\//g, 'onclick="window.searchWord(\'');
         return html;
     }
@@ -1535,7 +2100,10 @@
         setTimeout(() => {
             try {
                 let text = '';
-                if (window.AndroidBridge && window.AndroidBridge.readAssetFile) {
+                if (window.AndroidBridge && window.AndroidBridge.readAssetFileBase64) {
+                    text = readGzAsset('dicts/' + bookName + '.json.gz');
+                }
+                if (!text && window.AndroidBridge && window.AndroidBridge.readAssetFile) {
                     text = window.AndroidBridge.readAssetFile('dicts/' + bookName + '.json');
                 }
                 if (!text) {
@@ -1564,6 +2132,19 @@
     }
 
     window._dictJsonCallback = function() {};
+
+    // Read a gzipped asset (stored as .json.gz) and return its text content
+    function readGzAsset(path) {
+        if (!window.AndroidBridge || !window.AndroidBridge.readAssetFileBase64) return '';
+        const b64 = window.AndroidBridge.readAssetFileBase64(path);
+        if (!b64) return '';
+        const bin = atob(b64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) {
+            bytes[i] = bin.charCodeAt(i);
+        }
+        return new TextDecoder('utf-8').decode(pako.inflate(bytes));
+    }
 
     function processLearnWords(bookName, words) {
         learnWords = words;

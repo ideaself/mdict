@@ -21,6 +21,30 @@
     --toolbar-height: 0px;
 }
 
+body.dark {
+    --primary: #F9A825;
+    --primary-dark: #FFC14D;
+    --primary-light: #3E2F14;
+    --accent: #FFB300;
+    --bg: #121212;
+    --surface: #1E1E1E;
+    --text: #E8E0D8;
+    --text-secondary: #A08D7F;
+    --divider: #3A342E;
+    --danger: #EF5350;
+    --success: #66BB6A;
+}
+
+body.dark .import-status.success { background: #1B3A1F; color: #81C784; }
+body.dark .import-status.error { background: #3D1F1F; color: #EF9A9A; }
+body.dark .import-status.loading { background: #2A2418; color: #FFC14D; }
+body.dark .btn-fav.favorited { color: #FFD600; }
+body.dark .suggestion-item:hover,
+body.dark .word-item:hover { background: rgba(255, 255, 255, 0.06); }
+body.dark input,
+body.dark select { color: var(--text); }
+body.dark input::placeholder { color: var(--text-secondary); }
+
 html, body {
     height: 100%;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
@@ -539,6 +563,33 @@ html, body {
     color: var(--text);
     white-space: pre-wrap;
     word-break: break-word;
+}
+
+/* Multi-dict results */
+.dict-extra-block {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--divider);
+}
+
+.dict-extra-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--primary-dark);
+    margin-bottom: 8px;
+}
+
+.dict-enable {
+    display: inline-flex;
+    align-items: center;
+    margin-right: 6px;
+    cursor: pointer;
+}
+
+.dict-enable input {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--primary);
 }
 
 /* Bottom Nav */

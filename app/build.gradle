@@ -3,6 +3,9 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+def mdictVersionCode = project.hasProperty('mdictVersionCode') ? (project.property('mdictVersionCode') as Integer) : 1
+def mdictVersionName = project.hasProperty('mdictVersionName') ? (project.property('mdictVersionName') as String) : "1.0"
+
 android {
     namespace 'com.mdict.app'
     compileSdk 34
@@ -12,8 +15,8 @@ android {
         applicationId "com.mdict.app"
         minSdk 24
         targetSdk 34
-        versionCode 1
-        versionName "1.0"
+        versionCode mdictVersionCode
+        versionName mdictVersionName
         archivesBaseName = "MDict"
     }
 
