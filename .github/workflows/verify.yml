@@ -1,0 +1,28 @@
+name: Verify index parity
+
+on:
+  push:
+    paths:
+      - 'app/src/main/assets/mdict-lib.js'
+      - 'app/src/main/assets/app.js'
+      - 'app/src/main/java/**'
+      - 'tools/**'
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Generate fixtures and check parity
+        run: |
+          node tools/make-fixture.mjs /tmp/fixtures
+          node tools/verify-index.mjs /tmp/fixtures/fixture.mdx --words=apple,bat,hello,we
+          node tools/verify-index.mjs /tmp/fixtures/fixture.mdd

@@ -7429,11 +7429,11 @@
       if (typeof globalThis.Buffer === "undefined") {
         globalThis.Buffer = Buffer2;
       }
-      var { MDX } = require_index();
+      var { MDX, MDD } = require_index();
       function setBuffer(arrayBuffer) {
         globalThis.__mdict_buffer = arrayBuffer;
       }
-      globalThis.MDictLib = { MDX, setBuffer };
+      globalThis.MDictLib = { MDX, MDD, setBuffer };
     }
   });
   require_browser_entry();

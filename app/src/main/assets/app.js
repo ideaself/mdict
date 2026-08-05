@@ -182,9 +182,10 @@
 
         uris.forEach(uri => {
             const fileName = window.AndroidBridge?.getFileName(uri) || 'unknown';
-            if (fileName.endsWith('.css')) cssFiles.push({ uri, fileName });
-            else if (fileName.endsWith('.mdd')) mddFiles.push({ uri, fileName });
-            else if (fileName.endsWith('.mdx')) mdxFiles.push({ uri, fileName });
+            const lower = fileName.toLowerCase();
+            if (lower.endsWith('.css')) cssFiles.push({ uri, fileName });
+            else if (lower.endsWith('.mdd')) mddFiles.push({ uri, fileName });
+            else if (lower.endsWith('.mdx')) mdxFiles.push({ uri, fileName });
         });
 
         if (mdxFiles.length === 0 && mddFiles.length === 0) {
@@ -323,18 +324,19 @@
 
     function processFile(fileName, base64Data, internalPath) {
         return new Promise((resolve, reject) => {
-            if (fileName.endsWith('.css')) {
+            const lower = fileName.toLowerCase();
+            if (lower.endsWith('.css')) {
                 processCSSFile(fileName, base64Data);
-                resolve({ type: 'css' });
+                resolve({ count: 0 });
                 return;
             }
 
-            if (fileName.endsWith('.mdd')) {
+            if (lower.endsWith('.mdd')) {
                 processMddFile(fileName, base64Data, internalPath).then(resolve, reject);
                 return;
             }
 
-            if (!fileName.endsWith('.mdx')) {
+            if (!lower.endsWith('.mdx')) {
                 reject(new Error('仅支持 .mdx / .mdd / .css 文件'));
                 return;
             }
