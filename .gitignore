@@ -7,6 +7,9 @@ local.properties
 # Release signing key (never commit)
 keystore.properties
 
+# Local dictionary files (keep on disk, not in git)
+mydictionary/
+
 # OS files
 .DS_Store
 Thumbs.db

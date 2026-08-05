@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Outline
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.util.Base64
@@ -17,11 +18,6 @@ import android.view.WindowInsets
 import android.widget.Toast
 import android.webkit.*
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
-import android.content.pm.PackageManager
-import android.os.Environment
-import android.os.Build
 import androidx.activity.OnBackPressedCallback
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -56,10 +52,6 @@ class MainActivity : AppCompatActivity() {
 
         dimOverlay = findViewById(R.id.dim_overlay)
         dimOverlay.setOnClickListener { closeLookupWindow() }
-
-        if (!isLookupAction(intent?.action)) {
-            checkPermissions()
-        }
 
         webView = findViewById(R.id.webview)
         webView.settings.apply {
@@ -1536,32 +1528,6 @@ class MainActivity : AppCompatActivity() {
                     null
                 )
             }
-        }
-    }
-
-    private fun checkPermissions() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            // Android 13+
-            val perms = arrayOf(
-                android.Manifest.permission.READ_MEDIA_IMAGES,
-                android.Manifest.permission.READ_MEDIA_VIDEO,
-                android.Manifest.permission.READ_MEDIA_AUDIO
-            )
-            ActivityCompat.requestPermissions(this, perms, PERMISSION_REQUEST)
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            // Android 11-12
-            if (!Environment.isExternalStorageManager()) {
-                val intent = Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-                intent.data = Uri.parse("package:$packageName")
-                startActivity(intent)
-            }
-        } else {
-            // Android 10 and below
-            val perms = arrayOf(
-                android.Manifest.permission.READ_EXTERNAL_STORAGE,
-                android.Manifest.permission.WRITE_EXTERNAL_STORAGE
-            )
-            ActivityCompat.requestPermissions(this, perms, PERMISSION_REQUEST)
         }
     }
 
