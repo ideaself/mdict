@@ -559,7 +559,28 @@ class MainActivity : AppCompatActivity() {
             val json = readDictCacheInternal(name + ".idx.json")
             if (json.isEmpty()) return null
             return try {
-                org.json.JSONObject(json).also { mddIdxCache[name] = it }
+                val idx = org.json.JSONObject(json)
+                if (idx.optInt("v", 1) != 2) {
+                    // Stale index (old sort order / format): rebuild natively once
+                    val registry = readMddRegistry()
+                    for (i in 0 until registry.length()) {
+                        val entry = registry.getJSONObject(i)
+                        if (entry.optString("name") != name) continue
+                        try {
+                            buildIndexInternal(File(entry.optString("path")), name, isMdd = true, requestId = 0)
+                            val fresh = readDictCacheInternal(name + ".idx.json")
+                            if (fresh.isNotEmpty()) {
+                                return org.json.JSONObject(fresh).also { mddIdxCache[name] = it }
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Mdd idx rebuild error: ${e.message}")
+                        }
+                        break
+                    }
+                    null
+                } else {
+                    idx.also { mddIdxCache[name] = it }
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Mdd idx parse error: ${e.message}")
                 null
@@ -1160,7 +1181,7 @@ class MainActivity : AppCompatActivity() {
                 k.append("\",${item.recordStartOffset},${item.recordEndOffset},${item.keyBlockIdx}]")
             }
             k.append("]")
-            val idxJson = "{\"v\":1,\"enc\":\"$encLabel\",\"encrypt\":$encrypt,\"rbs\":$rbs,\"k\":$k,\"r\":$r}"
+            val idxJson = "{\"v\":2,\"enc\":\"$encLabel\",\"encrypt\":$encrypt,\"rbs\":$rbs,\"k\":$k,\"r\":$r}"
 
             // STEP 9. save cache (+ register in the mdd registry)
             saveDictCacheInternal(fileName + ".idx.json", idxJson)

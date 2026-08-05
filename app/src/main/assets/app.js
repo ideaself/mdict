@@ -463,7 +463,7 @@
                     // resources on demand without parsing the whole mdd)
                     kw.sort((a, b) => a.keyText < b.keyText ? -1 : a.keyText > b.keyText ? 1 : 0);
                     const idx = {
-                        v: 1,
+                        v: 2,
                         enc: parser.meta.encoding || 'UTF-8',
                         encrypt: parser.meta.encrypt || 0,
                         rbs: parser._recordBlockStartOffset || 0,
@@ -712,19 +712,12 @@
         }
 
         // Index cache exists -> fast startup, records read on demand
-        if (dictInfo.internalPath && window.AndroidBridge && window.AndroidBridge.readDictCache) {
-            try {
-                const cacheJson = window.AndroidBridge.readDictCache(dictInfo.fileName + '.idx.json');
-                if (cacheJson) {
-                    const idx = JSON.parse(cacheJson);
-                    currentDict = createLightParser(idx, dictInfo.internalPath);
-                    currentDictName = dictId;
-                    finishDictLoad();
-                    return;
-                }
-            } catch (e) {
-                console.error('Dict cache load error:', e);
-            }
+        const idx = await loadDictIndex(dictInfo);
+        if (idx) {
+            currentDict = createLightParser(idx, dictInfo.internalPath);
+            currentDictName = dictId;
+            finishDictLoad();
+            return;
         }
 
         dictLoading = true;
@@ -782,6 +775,38 @@
 
     const READ_CHUNK_SIZE = 2 * 1024 * 1024;
 
+    // Load a dict's idx cache, self-healing stale versions (old sort order /
+    // format) by rebuilding the index natively before use.
+    async function loadDictIndex(dictInfo) {
+        const bridge = window.AndroidBridge;
+        if (!dictInfo.internalPath || !bridge || !bridge.readDictCache) return null;
+        const cacheJson = bridge.readDictCache(dictInfo.fileName + '.idx.json');
+        if (!cacheJson) return null;
+        let idx;
+        try {
+            idx = JSON.parse(cacheJson);
+        } catch (e) {
+            return null;
+        }
+        console.log('loadDictIndex', dictInfo.fileName, 'idx.v=' + idx.v);
+        if (idx.v === 2 || !bridge.buildMdxIndex) return idx;
+        try {
+            await new Promise((resolve, reject) => {
+                const requestId = ++mddImportRequestId;
+                pendingMddImports[requestId] = { resolve, reject };
+                bridge.buildMdxIndex(dictInfo.internalPath, dictInfo.fileName, requestId);
+            });
+            const fresh = bridge.readDictCache(dictInfo.fileName + '.idx.json');
+            if (fresh) {
+                idx = JSON.parse(fresh);
+                console.log('Index rebuilt (v2):', dictInfo.fileName);
+            }
+        } catch (e) {
+            console.warn('Index self-heal rebuild failed:', e.message);
+        }
+        return idx;
+    }
+
     // Load a dictionary in the background without switching the active dict.
     async function ensureDictLoaded(dictId, onDone) {
         const dictInfo = allDicts.find(d => d.id === dictId);
@@ -794,19 +819,12 @@
             return;
         }
         // Index cache first (fast, no big buffer)
-        if (dictInfo.internalPath && window.AndroidBridge && window.AndroidBridge.readDictCache) {
-            try {
-                const cacheJson = window.AndroidBridge.readDictCache(dictInfo.fileName + '.idx.json');
-                if (cacheJson) {
-                    const idx = JSON.parse(cacheJson);
-                    window._dictParsers = window._dictParsers || {};
-                    window._dictParsers[dictId] = createLightParser(idx, dictInfo.internalPath);
-                    onDone?.();
-                    return;
-                }
-            } catch (e) {
-                console.error('Dict cache load error:', e);
-            }
+        const idx = await loadDictIndex(dictInfo);
+        if (idx) {
+            window._dictParsers = window._dictParsers || {};
+            window._dictParsers[dictId] = createLightParser(idx, dictInfo.internalPath);
+            onDone?.();
+            return;
         }
         // Full chunked load (silent)
         if (dictInfo.internalPath && window.AndroidBridge && window.AndroidBridge.readLocalFileChunk) {
@@ -1049,7 +1067,7 @@
                 if (hex !== '00000000' && hex !== '02000000') return;
             }
             const idx = {
-                v: 1,
+                v: 2,
                 enc: parser.meta.encoding || 'UTF-8',
                 encrypt: parser.meta.encrypt || 0,
                 rbs: parser._recordBlockStartOffset || 0,
