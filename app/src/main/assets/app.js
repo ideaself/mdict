@@ -215,23 +215,12 @@
 
         // 2. Dictionaries (at least one .mdx required)
         for (const { uri, fileName } of mdxFiles) {
-            let internalPath = '';
             try {
-                if (window.AndroidBridge) {
-                    internalPath = window.AndroidBridge.saveFileToInternal(uri, fileName) || '';
-                }
+                const info = await importMdxFile(uri, fileName);
+                registerDict(fileName, info);
+                dictCount++;
             } catch (e) {
                 errors.push(`${fileName}: ${e.message}`);
-                continue;
-            }
-            const base64 = window.AndroidBridge?.readFileAsBase64(uri) || '';
-            if (base64) {
-                try {
-                    await processFile(fileName, base64, internalPath);
-                    dictCount++;
-                } catch (e) {
-                    errors.push(`${fileName}: ${e.message}`);
-                }
             }
         }
 
@@ -258,6 +247,68 @@
         refreshDictList();
     }
 
+    // Register an imported dictionary in localStorage (parser is created lazily
+    // from the idx cache when the dict is opened).
+    function registerDict(fileName, info) {
+        const dictId = fileName.replace('.mdx', '');
+        const dictData = {
+            id: dictId,
+            name: info.title || fileName,
+            fileName: fileName,
+            keywordCount: info.count || 0,
+            version: info.version || 0,
+            encoding: info.enc || 'UTF-8',
+            internalPath: info.internalPath || ''
+        };
+        allDicts = allDicts.filter(d => d.id !== dictId);
+        allDicts.push(dictData);
+        localStorage.setItem('mdict_dicts', JSON.stringify(allDicts));
+        if (window._dictParsers) delete window._dictParsers[dictId];
+        if (window._dictBuffers) delete window._dictBuffers[dictId];
+        refreshDictList();
+    }
+
+    // Import a single .mdx file. Preferred path: native index build (no base64
+    // read, seconds even for big dictionaries). Falls back to the slow js-mdict
+    // parse for files the native builder can't handle (lzo records, encryption).
+    async function importMdxFile(uri, fileName) {
+        let internalPath = '';
+        if (window.AndroidBridge) {
+            try {
+                internalPath = window.AndroidBridge.saveFileToInternal(uri, fileName) || '';
+            } catch (e) {}
+        }
+        if (window.AndroidBridge && window.AndroidBridge.buildMdxIndex && internalPath) {
+            // Re-import invalidates any cached index for this file
+            if (window.AndroidBridge.deleteDictCache) {
+                window.AndroidBridge.deleteDictCache(fileName + '.idx.json');
+            }
+            try {
+                showImportStatus('import-status', 'loading', '正在解析词典...');
+                const result = await new Promise((resolve, reject) => {
+                    const requestId = ++mddImportRequestId;
+                    pendingMddImports[requestId] = { resolve, reject };
+                    window.AndroidBridge.buildMdxIndex(internalPath, fileName, requestId);
+                });
+                return {
+                    count: result.count || 0,
+                    title: result.title || '',
+                    version: result.version || 0,
+                    enc: result.enc || 'UTF-8',
+                    internalPath: internalPath
+                };
+            } catch (e) {
+                console.warn('Native MDX index build failed, falling back to js-mdict:', e.message);
+            }
+        }
+        // Fallback: slow js-mdict parse of the whole file
+        const base64 = window.AndroidBridge?.readFileAsBase64(uri) || '';
+        if (base64) {
+            return processFile(fileName, base64, internalPath);
+        }
+        throw new Error('读取文件失败');
+    }
+
     function processFile(fileName, base64Data, internalPath) {
         return new Promise((resolve, reject) => {
             if (fileName.endsWith('.css')) {
@@ -276,11 +327,6 @@
                 return;
             }
 
-            // Re-import invalidates any cached index for this file
-            if (window.AndroidBridge && window.AndroidBridge.deleteDictCache) {
-                window.AndroidBridge.deleteDictCache(fileName + '.idx.json');
-            }
-
             showImportStatus('import-status', 'loading', '正在解析词典...');
 
             setTimeout(() => {
@@ -297,35 +343,15 @@
                     MDictLib.setBuffer(bytes.buffer);
                     const parser = new MDictLib.MDX('dummy');
 
-                    const info = {
-                        title: parser.header?.Title || fileName.replace('.mdx',''),
-                        keywordCount: parser.keywordList?.length || 0,
+                    console.log('Parse complete:', parser.header?.Title, parser.keywordList?.length);
+
+                    resolve({
+                        title: parser.header?.Title || fileName.replace('.mdx', ''),
+                        count: parser.keywordList?.length || 0,
                         version: parser.meta?.version || 0,
-                        encoding: parser.meta?.encoding || 'UTF-8'
-                    };
-
-                    console.log('Parse complete:', info);
-
-                    const dictId = fileName.replace('.mdx', '');
-                    const dictData = {
-                        id: dictId,
-                        name: info.title || fileName,
-                        fileName: fileName,
-                        keywordCount: info.keywordCount,
-                        version: info.version,
-                        encoding: info.encoding,
+                        enc: parser.meta?.encoding || 'UTF-8',
                         internalPath: internalPath || ''
-                    };
-
-                    allDicts = allDicts.filter(d => d.id !== dictId);
-                    allDicts.push(dictData);
-                    localStorage.setItem('mdict_dicts', JSON.stringify(allDicts));
-
-                    window._dictParsers = window._dictParsers || {};
-                    window._dictParsers[dictId] = parser;
-
-                    refreshDictList();
-                    resolve(info);
+                    });
                 } catch (e) {
                     console.error('Parse error:', e);
                     reject(e);
@@ -341,7 +367,10 @@
         if (window.AndroidBridge && window.AndroidBridge.buildMddIndex) {
             return new Promise((resolve, reject) => {
                 const requestId = ++mddImportRequestId;
-                pendingMddImports[requestId] = { resolve, reject };
+                pendingMddImports[requestId] = {
+                    resolve: r => resolve(r && r.count ? r.count : 0),
+                    reject
+                };
                 const internalPath = window.AndroidBridge.saveFileToInternalWithProgress(uri, fileName, requestId) || '';
                 if (!internalPath) {
                     delete pendingMddImports[requestId];
@@ -387,7 +416,7 @@
             result = { ok: false, error: '解析返回数据失败' };
         }
         if (result.ok) {
-            pending.resolve(result.count || 0);
+            pending.resolve(result);
         } else {
             pending.reject(new Error(result.error || '资源文件解析失败'));
         }
@@ -418,6 +447,7 @@
 
                     // Build resource index cache (used by the native side to read
                     // resources on demand without parsing the whole mdd)
+                    kw.sort((a, b) => a.keyText < b.keyText ? -1 : a.keyText > b.keyText ? 1 : 0);
                     const idx = {
                         v: 1,
                         enc: parser.meta.encoding || 'UTF-8',
@@ -874,16 +904,18 @@
             let mid = 0;
             while (left <= right) {
                 mid = left + (right - left >> 1);
-                const compRes = word.localeCompare(list[mid].keyText);
-                if (compRes > 0) {
+                // Code-unit comparison: must match the sort order used when the
+                // index was built (native Kotlin compareTo, JS < >). localeCompare
+                // collation order differs for punctuation/non-ASCII keys.
+                if (word > list[mid].keyText) {
                     left = mid + 1;
-                } else if (compRes === 0) {
+                } else if (word === list[mid].keyText) {
                     break;
                 } else {
                     right = mid - 1;
                 }
             }
-            if (word.localeCompare(list[mid].keyText) !== 0 && !isAssociate) {
+            if (list[mid].keyText !== word && !isAssociate) {
                 return undefined;
             }
             return list[mid];
@@ -988,6 +1020,8 @@
             const ri = parser.recordInfoList || [];
             if (kw.length === 0 || ri.length === 0) return;
             if (parser.meta.encrypt === 1) return;
+            // Code-unit sort: matches the light parser's search comparator
+            kw.sort((a, b) => a.keyText < b.keyText ? -1 : a.keyText > b.keyText ? 1 : 0);
             // Skip unsupported record compression (e.g. lzo)
             if (window.AndroidBridge.readLocalFileChunk) {
                 const first = window.AndroidBridge.readLocalFileChunk(

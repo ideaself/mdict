@@ -23,6 +23,7 @@ import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.RandomAccessFile
+import java.nio.charset.Charset
 
 class MainActivity : AppCompatActivity() {
 
@@ -876,9 +877,21 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private class DictIndexInfo(val count: Int, val title: String, val enc: String, val version: Float)
+
     // Build the MDD resource index by reading only the file header + key blocks + record
     // block infos (all located at the front of the file), so importing a multi-GB .mdd is fast.
     private fun buildMddIndexInternal(file: File, fileName: String, requestId: Int): Int {
+        return buildIndexInternal(file, fileName, isMdd = true, requestId = requestId).count
+    }
+
+    // Same for MDX: produces the idx cache the JS light parser uses, so importing a
+    // dictionary no longer needs a full base64 read + js-mdict parse in the WebView.
+    private fun buildMdxIndexInternal(file: File, fileName: String): DictIndexInfo {
+        return buildIndexInternal(file, fileName, isMdd = false, requestId = 0)
+    }
+
+    private fun buildIndexInternal(file: File, fileName: String, isMdd: Boolean, requestId: Int): DictIndexInfo {
         RandomAccessFile(file, "r").use { raf ->
             val fileLen = raf.length()
             fun readBytes(offset: Long, len: Int): ByteArray {
@@ -913,6 +926,25 @@ class MainActivity : AppCompatActivity() {
             }
             if (encrypt == 1) throw IllegalStateException("Encrypted=Yes 词典暂不支持")
 
+            // key encoding: MDD keys are always UTF-16; MDX follows the header
+            val rawEnc = (headerMap["encoding"] ?: "").lowercase()
+            val utf16 = isMdd || rawEnc.startsWith("utf-16") || rawEnc == "utf16"
+            val gbk = rawEnc == "gbk" || rawEnc == "gb2312" || rawEnc == "gb18030"
+            val big5 = rawEnc == "big5"
+            val charset = when {
+                utf16 -> Charsets.UTF_16LE
+                gbk -> Charset.forName("GBK")
+                big5 -> Charset.forName("Big5")
+                else -> Charsets.UTF_8
+            }
+            val width = if (utf16) 2 else 1
+            val encLabel = when {
+                utf16 -> "UTF-16"
+                gbk -> "GBK"
+                big5 -> "Big5"
+                else -> "UTF-8"
+            }
+
             // STEP 2. key block header
             val keyHeaderSize = if (version >= 2) 40 else 16
             val keyHeaderExtra = if (version >= 2) 4 else 0
@@ -944,10 +976,18 @@ class MainActivity : AppCompatActivity() {
             for (i in 0 until keywordBlocksNum) {
                 val blockWordCount = b2n(keyInfo, infoOff, numWidth); infoOff += numWidth
                 var firstWordSize = b2n(keyInfo, infoOff, numWidth / 4).toInt(); infoOff += numWidth / 4
-                firstWordSize = if (version >= 2) (firstWordSize + 1) * 2 else firstWordSize * 2
+                firstWordSize = if (version >= 2) {
+                    if (utf16) (firstWordSize + 1) * 2 else firstWordSize + 1
+                } else {
+                    if (utf16) firstWordSize * 2 else firstWordSize
+                }
                 infoOff += firstWordSize
                 var lastWordSize = b2n(keyInfo, infoOff, numWidth / 4).toInt(); infoOff += numWidth / 4
-                lastWordSize = if (version >= 2) (lastWordSize + 1) * 2 else lastWordSize * 2
+                lastWordSize = if (version >= 2) {
+                    if (utf16) (lastWordSize + 1) * 2 else lastWordSize + 1
+                } else {
+                    if (utf16) lastWordSize * 2 else lastWordSize
+                }
                 infoOff += lastWordSize
                 val packSize = b2n(keyInfo, infoOff, numWidth).toInt(); infoOff += numWidth
                 val unpackSize = b2n(keyInfo, infoOff, numWidth).toInt(); infoOff += numWidth
@@ -981,28 +1021,37 @@ class MainActivity : AppCompatActivity() {
                     pos += numWidth
                     var end = -1
                     var i = pos
-                    while (i + 1 < keyBlock.size) {
-                        if (keyBlock[i] == 0.toByte() && keyBlock[i + 1] == 0.toByte()) { end = i; break }
-                        i += 2
+                    if (width == 2) {
+                        while (i + 1 < keyBlock.size) {
+                            if (keyBlock[i] == 0.toByte() && keyBlock[i + 1] == 0.toByte()) { end = i; break }
+                            i += 2
+                        }
+                    } else {
+                        while (i < keyBlock.size) {
+                            if (keyBlock[i] == 0.toByte()) { end = i; break }
+                            i += 1
+                        }
                     }
                     if (end == -1) break
-                    val keyText = String(keyBlock, pos, end - pos, Charsets.UTF_16LE)
+                    val keyText = String(keyBlock, pos, end - pos, charset)
                     if (localKeys.isNotEmpty() && localKeys.last().recordEndOffset == -1L) {
                         localKeys.last().recordEndOffset = meaningOffset
                     }
                     localKeys.add(KeyItem(keyText, meaningOffset, -1L, idx))
-                    pos = end + 2
+                    pos = end + width
                 }
                 if (keyList.isNotEmpty() && keyList.last().recordEndOffset == -1L && localKeys.isNotEmpty()) {
                     keyList.last().recordEndOffset = localKeys[0].recordStartOffset
                 }
                 keyList.addAll(localKeys)
                 blockPackAccu += info.first
-                runOnUiThread {
-                    webView.evaluateJavascript(
-                        "window.onMddIndexProgress($requestId, ${(idx + 1) * 100 / blockInfo.size})",
-                        null
-                    )
+                if (requestId > 0) {
+                    runOnUiThread {
+                        webView.evaluateJavascript(
+                            "window.onMddIndexProgress($requestId, ${(idx + 1) * 100 / blockInfo.size})",
+                            null
+                        )
+                    }
                 }
             }
             if (keyList.size.toLong() != keywordNum) {
@@ -1039,7 +1088,17 @@ class MainActivity : AppCompatActivity() {
             }
             val rbs = recordInfoStart + recordInfoCompSize
 
-            // STEP 7. sort by key text (native binary search relies on compareTo order)
+            // MDX only: the JS light parser cannot decompress lzo record blocks, so
+            // reject such dictionaries and let JS fall back to the js-mdict parser.
+            if (!isMdd && recordBlocksNum > 0) {
+                val compBytes = readBytes(rbs, 4)
+                val compHex = compBytes.joinToString("") { "%02x".format(it) }
+                if (compHex != "00000000" && compHex != "02000000") {
+                    throw IllegalStateException("LZO_COMPRESSED")
+                }
+            }
+
+            // STEP 7. sort by key text (code-unit order, matches Kotlin compareTo and JS < >)
             keyList.sortWith(compareBy { it.keyText })
 
             // STEP 8. build idx json
@@ -1062,18 +1121,20 @@ class MainActivity : AppCompatActivity() {
                 k.append("\",${item.recordStartOffset},${item.recordEndOffset},${item.keyBlockIdx}]")
             }
             k.append("]")
-            val idxJson = "{\"v\":1,\"enc\":\"UTF-16\",\"encrypt\":$encrypt,\"rbs\":$rbs,\"k\":$k,\"r\":$r}"
+            val idxJson = "{\"v\":1,\"enc\":\"$encLabel\",\"encrypt\":$encrypt,\"rbs\":$rbs,\"k\":$k,\"r\":$r}"
 
-            // STEP 9. save cache + register
+            // STEP 9. save cache (+ register in the mdd registry)
             saveDictCacheInternal(fileName + ".idx.json", idxJson)
             synchronized(mddIdxCache) { mddIdxCache.remove(fileName) }
-            val registry = readMddRegistry()
-            for (i in registry.length() - 1 downTo 0) {
-                if (registry.getJSONObject(i).optString("name") == fileName) registry.remove(i)
+            if (isMdd) {
+                val registry = readMddRegistry()
+                for (i in registry.length() - 1 downTo 0) {
+                    if (registry.getJSONObject(i).optString("name") == fileName) registry.remove(i)
+                }
+                registry.put(org.json.JSONObject().put("name", fileName).put("path", file.absolutePath))
+                saveDictCacheInternal("mdd_registry.json", registry.toString())
             }
-            registry.put(org.json.JSONObject().put("name", fileName).put("path", file.absolutePath))
-            saveDictCacheInternal("mdd_registry.json", registry.toString())
-            return keyList.size
+            return DictIndexInfo(keyList.size, headerMap["title"] ?: "", encLabel, version)
         }
     }
 
@@ -1445,6 +1506,24 @@ class MainActivity : AppCompatActivity() {
                     "{\"ok\":true,\"count\":$count}"
                 } catch (e: Exception) {
                     Log.e(TAG, "buildMddIndex error: ${e.message}")
+                    "{\"ok\":false,\"error\":${jsEscape(e.message ?: "unknown error")}}"
+                }
+                runOnUiThread {
+                    webView.evaluateJavascript("window.onMddIndexDone($requestId, ${jsEscape(result)})", null)
+                }
+            }.start()
+        }
+
+        // Same for MDX: builds the idx cache natively so import needs no full base64
+        // read + js-mdict parse. Reports title/version/encoding for dict registration.
+        @JavascriptInterface
+        fun buildMdxIndex(path: String, fileName: String, requestId: Int) {
+            Thread {
+                val result = try {
+                    val info = buildMdxIndexInternal(File(path), fileName)
+                    "{\"ok\":true,\"count\":${info.count},\"title\":${jsEscape(info.title)},\"enc\":${jsEscape(info.enc)},\"version\":${info.version}}"
+                } catch (e: Exception) {
+                    Log.e(TAG, "buildMdxIndex error: ${e.message}")
                     "{\"ok\":false,\"error\":${jsEscape(e.message ?: "unknown error")}}"
                 }
                 runOnUiThread {
