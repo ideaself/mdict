@@ -471,7 +471,7 @@ class MainActivity : AppCompatActivity() {
     // re-reading + re-parsing them on every resource request would be very slow.
     // Access-order LRU (max 8 dictionaries).
     private val mddIdxCache = object : LinkedHashMap<String, org.json.JSONObject>(16, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, org.json.JSONObject>?): Boolean = size > 8
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, org.json.JSONObject>?): Boolean = size > 4
     }
 
     // url(...) references inside dictionary css (backgrounds, @font-face, ...)
@@ -999,6 +999,7 @@ class MainActivity : AppCompatActivity() {
             val keyList = ArrayList<KeyItem>()
             var keyBlockStart = keyHeaderEnd + keyInfoPackedSize
             var blockPackAccu = 0L
+            var lastReportedPct = -1
             for (idx in blockInfo.indices) {
                 val info = blockInfo[idx]
                 val kbPacked = readBytes(keyBlockStart + blockPackAccu, info.first)
@@ -1046,11 +1047,17 @@ class MainActivity : AppCompatActivity() {
                 keyList.addAll(localKeys)
                 blockPackAccu += info.first
                 if (requestId > 0) {
-                    runOnUiThread {
-                        webView.evaluateJavascript(
-                            "window.onMddIndexProgress($requestId, ${(idx + 1) * 100 / blockInfo.size})",
-                            null
-                        )
+                    // Batch progress: report at most every 5% (thousands of blocks
+                    // would otherwise mean thousands of bridge calls)
+                    val pct = (idx + 1) * 100 / blockInfo.size
+                    if (pct - lastReportedPct >= 5 || idx == blockInfo.size - 1) {
+                        lastReportedPct = pct
+                        runOnUiThread {
+                            webView.evaluateJavascript(
+                                "window.onMddIndexProgress($requestId, $pct)",
+                                null
+                            )
+                        }
                     }
                 }
             }
@@ -1173,7 +1180,8 @@ class MainActivity : AppCompatActivity() {
                 return@Thread
             }
             Log.d(TAG, "Sound data ${data.size} bytes for key=$key")
-            val tmp = File(cacheDir, "tmp_sound")
+            // Unique temp file: rapid taps must not race on the same path
+            val tmp = File(cacheDir, "tmp_sound_${System.currentTimeMillis()}_${Thread.currentThread().id}")
             try {
                 tmp.writeBytes(data)
             } catch (e: Exception) {
@@ -1188,6 +1196,7 @@ class MainActivity : AppCompatActivity() {
                         setOnCompletionListener { mp ->
                             mp.release()
                             if (mediaPlayer === mp) mediaPlayer = null
+                            tmp.delete()
                         }
                         prepare()
                         start()
@@ -1195,6 +1204,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Sound play error: ${e.message}")
+                    tmp.delete()
                 }
             }
         }.start()

@@ -268,27 +268,33 @@
         refreshDictList();
     }
 
-    // Import a single .mdx file. Preferred path: native index build (no base64
-    // read, seconds even for big dictionaries). Falls back to the slow js-mdict
+    // Import a single .mdx file. Preferred path: native copy (progress + dedup)
+    // + native index build (no base64 read). Falls back to the slow js-mdict
     // parse for files the native builder can't handle (lzo records, encryption).
     async function importMdxFile(uri, fileName) {
-        let internalPath = '';
-        if (window.AndroidBridge) {
+        if (window.AndroidBridge && window.AndroidBridge.buildMdxIndex) {
             try {
-                internalPath = window.AndroidBridge.saveFileToInternal(uri, fileName) || '';
-            } catch (e) {}
-        }
-        if (window.AndroidBridge && window.AndroidBridge.buildMdxIndex && internalPath) {
-            // Re-import invalidates any cached index for this file
-            if (window.AndroidBridge.deleteDictCache) {
-                window.AndroidBridge.deleteDictCache(fileName + '.idx.json');
-            }
-            try {
-                showImportStatus('import-status', 'loading', '正在解析词典...');
-                const result = await new Promise((resolve, reject) => {
+                const { internalPath, result } = await new Promise((resolve, reject) => {
                     const requestId = ++mddImportRequestId;
-                    pendingMddImports[requestId] = { resolve, reject };
-                    window.AndroidBridge.buildMdxIndex(internalPath, fileName, requestId);
+                    let resolvedPath = '';
+                    // Register before the copy so copy progress displays too
+                    pendingMddImports[requestId] = {
+                        resolve: r => resolve({ internalPath: resolvedPath, result: r }),
+                        reject
+                    };
+                    try {
+                        resolvedPath = window.AndroidBridge.saveFileToInternalWithProgress(uri, fileName, requestId) || '';
+                    } catch (e) {}
+                    if (!resolvedPath) {
+                        delete pendingMddImports[requestId];
+                        reject(new Error('文件保存失败'));
+                        return;
+                    }
+                    // Re-import invalidates any cached index for this file
+                    if (window.AndroidBridge.deleteDictCache) {
+                        window.AndroidBridge.deleteDictCache(fileName + '.idx.json');
+                    }
+                    window.AndroidBridge.buildMdxIndex(resolvedPath, fileName, requestId);
                 });
                 return {
                     count: result.count || 0,
@@ -298,10 +304,16 @@
                     internalPath: internalPath
                 };
             } catch (e) {
-                console.warn('Native MDX index build failed, falling back to js-mdict:', e.message);
+                console.warn('Native MDX import failed, falling back to js-mdict:', e.message);
             }
         }
         // Fallback: slow js-mdict parse of the whole file
+        let internalPath = '';
+        if (window.AndroidBridge) {
+            try {
+                internalPath = window.AndroidBridge.saveFileToInternal(uri, fileName) || '';
+            } catch (e) {}
+        }
         const base64 = window.AndroidBridge?.readFileAsBase64(uri) || '';
         if (base64) {
             return processFile(fileName, base64, internalPath);
