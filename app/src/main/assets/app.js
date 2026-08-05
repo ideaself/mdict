@@ -202,18 +202,27 @@
 
         // 1. CSS companions (optional)
         cssFiles.forEach(({ uri, fileName }) => {
-            const base64 = window.AndroidBridge?.readFileAsBase64(uri) || '';
-            if (base64) {
-                processCSSFile(fileName, base64);
-                cssApplied = true;
+            try {
+                const base64 = window.AndroidBridge?.readFileAsBase64(uri) || '';
+                if (base64) {
+                    processCSSFile(fileName, base64);
+                    cssApplied = true;
+                }
+            } catch (e) {
+                errors.push(`${fileName}: ${e.message}`);
             }
         });
 
         // 2. Dictionaries (at least one .mdx required)
         for (const { uri, fileName } of mdxFiles) {
             let internalPath = '';
-            if (window.AndroidBridge) {
-                internalPath = window.AndroidBridge.saveFileToInternal(uri, fileName) || '';
+            try {
+                if (window.AndroidBridge) {
+                    internalPath = window.AndroidBridge.saveFileToInternal(uri, fileName) || '';
+                }
+            } catch (e) {
+                errors.push(`${fileName}: ${e.message}`);
+                continue;
             }
             const base64 = window.AndroidBridge?.readFileAsBase64(uri) || '';
             if (base64) {
@@ -228,20 +237,10 @@
 
         // 3. MDD companions (optional)
         for (const { uri, fileName } of mddFiles) {
-            let internalPath = '';
-            if (window.AndroidBridge) {
-                internalPath = window.AndroidBridge.saveFileToInternal(uri, fileName) || '';
-            }
-            // Native index building only needs the saved file path; skip reading the
-            // whole (possibly multi-GB) file as base64.
-            const useNative = !!(window.AndroidBridge && window.AndroidBridge.buildMddIndex && internalPath);
-            const base64 = useNative ? '' : (window.AndroidBridge?.readFileAsBase64(uri) || '');
-            if (useNative || base64) {
-                try {
-                    mddCount += await processMddFile(fileName, base64, internalPath);
-                } catch (e) {
-                    errors.push(`${fileName}: ${e.message}`);
-                }
+            try {
+                mddCount += await importMddFile(uri, fileName);
+            } catch (e) {
+                errors.push(`${fileName}: ${e.message}`);
             }
         }
 
@@ -335,6 +334,28 @@
         });
     }
 
+    // Import a single .mdd file. One requestId spans the whole flow so the user
+    // sees copy progress ("正在拷贝...") followed by index progress ("正在解析..."),
+    // and completes via onMddIndexDone.
+    function importMddFile(uri, fileName) {
+        if (window.AndroidBridge && window.AndroidBridge.buildMddIndex) {
+            return new Promise((resolve, reject) => {
+                const requestId = ++mddImportRequestId;
+                pendingMddImports[requestId] = { resolve, reject };
+                const internalPath = window.AndroidBridge.saveFileToInternalWithProgress(uri, fileName, requestId) || '';
+                if (!internalPath) {
+                    delete pendingMddImports[requestId];
+                    reject(new Error('文件保存失败'));
+                    return;
+                }
+                window.AndroidBridge.buildMddIndex(internalPath, fileName, requestId);
+            });
+        }
+        // Browser fallback: slow JS parse of the whole file
+        const base64 = window.AndroidBridge?.readFileAsBase64(uri) || '';
+        return processMddFileSlow(fileName, base64, '');
+    }
+
     function processMddFile(fileName, base64Data, internalPath) {
         // Fast path: native side builds the index by reading only the file header +
         // key blocks (front of file), so multi-GB .mdd files import in seconds.
@@ -349,9 +370,10 @@
         return processMddFileSlow(fileName, base64Data, internalPath);
     }
 
-    window.onMddIndexProgress = function(requestId, pct) {
+    window.onMddIndexProgress = function(requestId, pct, phase) {
         if (!pendingMddImports[requestId]) return;
-        showImportStatus('import-status', 'loading', `正在解析资源文件... ${pct}%`);
+        const label = phase === 'copy' ? '正在拷贝资源文件...' : '正在解析资源文件...';
+        showImportStatus('import-status', 'loading', `${label} ${pct}%`);
     };
 
     window.onMddIndexDone = function(requestId, json) {
@@ -938,6 +960,11 @@
                 const item = lookupKeyBlockByWord(phrase, true);
                 if (!item) return [];
                 return keywordList.filter(k => k.keyBlockIdx === item.keyBlockIdx);
+            },
+            prefix(prefix) {
+                const item = lookupKeyBlockByWord(prefix, true);
+                if (!item) return [];
+                return keywordList.filter(k => k.keyBlockIdx === item.keyBlockIdx && k.keyText.startsWith(prefix));
             }
         };
     }
@@ -1009,7 +1036,7 @@
         }
 
         // Show suggestions
-        const results = currentDict.prefix(value);
+        const results = currentDict.prefix ? currentDict.prefix(value) : [];
         if (results.length > 0) {
             suggestionList.innerHTML = results.slice(0, 20).map(item => `
                 <div class="suggestion-item" data-word="${escapeHtml(item.keyText)}">

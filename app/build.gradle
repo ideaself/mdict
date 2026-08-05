@@ -6,6 +6,17 @@ plugins {
 def mdictVersionCode = project.hasProperty('mdictVersionCode') ? (project.property('mdictVersionCode') as Integer) : 1
 def mdictVersionName = project.hasProperty('mdictVersionName') ? (project.property('mdictVersionName') as String) : "1.0"
 
+// Release signing: keystore.properties (gitignored) enables a real signing key.
+// Without it the build falls back to the debug keystore so local dev keeps working.
+def keystoreProperties = new Properties()
+def keystorePropsFile = rootProject.file('keystore.properties')
+def hasReleaseKey = keystorePropsFile.exists()
+if (hasReleaseKey) {
+    keystorePropsFile.withInputStream { keystoreProperties.load(it) }
+    hasReleaseKey = keystoreProperties['storeFile'] && keystoreProperties['storePassword'] &&
+        keystoreProperties['keyAlias'] && keystoreProperties['keyPassword']
+}
+
 android {
     namespace 'com.mdict.app'
     compileSdk 34
@@ -22,10 +33,17 @@ android {
 
     signingConfigs {
         release {
-            storeFile file("${System.getProperty('user.home')}/.android/debug.keystore")
-            storePassword 'android'
-            keyAlias 'androiddebugkey'
-            keyPassword 'android'
+            if (hasReleaseKey) {
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            } else {
+                storeFile file("${System.getProperty('user.home')}/.android/debug.keystore")
+                storePassword 'android'
+                keyAlias 'androiddebugkey'
+                keyPassword 'android'
+            }
         }
     }
 

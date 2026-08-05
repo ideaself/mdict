@@ -92,6 +92,7 @@ class MainActivity : AppCompatActivity() {
                 val url = request?.url?.toString() ?: return false
                 if (url.startsWith("sound://")) {
                     val key = url.removePrefix("sound://")
+                    Log.d(TAG, "sound:// tap: key=$key")
                     playSoundFromMdd(key)
                     return true
                 }
@@ -113,8 +114,31 @@ class MainActivity : AppCompatActivity() {
                     val key = Uri.decode(url.removePrefix("file:///mdd_res/"))
                     val bytes = loadMddResource(key)
                     if (bytes != null) {
+                        val mime = guessMime(key)
+                        if (mime == "text/css") {
+                            // Rewrite url(...) references inside dictionary css so that
+                            // css-referenced images/fonts also load from the MDD
+                            val css = String(bytes, Charsets.UTF_8)
+                            val fixed = css.replace(cssUrlRe) { m ->
+                                val p = m.groupValues[1].trim()
+                                if (p.startsWith("http:") || p.startsWith("https:") ||
+                                    p.startsWith("data:") || p.startsWith("//") ||
+                                    p.startsWith("#") || p.startsWith("file:")
+                                ) {
+                                    m.value
+                                } else {
+                                    "url(file:///mdd_res/${Uri.encode(p)})"
+                                }
+                            }
+                            if (fixed != css) {
+                                return android.webkit.WebResourceResponse(
+                                    "text/css", "utf-8",
+                                    ByteArrayInputStream(fixed.toByteArray(Charsets.UTF_8))
+                                )
+                            }
+                        }
                         return android.webkit.WebResourceResponse(
-                            guessMime(key),
+                            mime,
                             null,
                             ByteArrayInputStream(bytes)
                         )
@@ -450,6 +474,16 @@ class MainActivity : AppCompatActivity() {
 
     private var mediaPlayer: android.media.MediaPlayer? = null
 
+    // Parsed MDD index cache: idx JSONs can be tens of MB for big dictionaries,
+    // re-reading + re-parsing them on every resource request would be very slow.
+    // Access-order LRU (max 8 dictionaries).
+    private val mddIdxCache = object : LinkedHashMap<String, org.json.JSONObject>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, org.json.JSONObject>?): Boolean = size > 8
+    }
+
+    // url(...) references inside dictionary css (backgrounds, @font-face, ...)
+    private val cssUrlRe = Regex("""url\(\s*['"]?([^'")]+)['"]?\s*\)""", RegexOption.IGNORE_CASE)
+
     // ---- MDD resource loading ----
 
     private fun readMddRegistry(): org.json.JSONArray {
@@ -479,20 +513,36 @@ class MainActivity : AppCompatActivity() {
             val entry = registry.getJSONObject(i)
             val name = entry.optString("name", "")
             val path = entry.optString("path", "")
-            val idxJson = readDictCacheInternal(name + ".idx.json")
-            if (idxJson.isEmpty()) continue
+            val idx = getMddIdx(name) ?: continue
             try {
-                val bytes = lookupMddBytes(idxJson, normalized, path) ?: continue
+                val b1 = lookupMddBytes(idx, normalized, path)
+                val b2 = if (b1 == null && normalized.startsWith("\\")) lookupMddBytes(idx, normalized.substring(1), path) else null
+                val b3 = if (b1 == null && b2 == null) lookupMddBytes(idx, key, path) else null
+                val bytes = b1 ?: b2 ?: b3 ?: continue
                 return bytes
             } catch (e: Exception) {
                 Log.e(TAG, "Mdd lookup error: ${e.message}")
             }
         }
+        Log.d(TAG, "Mdd resource NOT FOUND: key=$key normalized=$normalized")
         return null
     }
 
-    private fun lookupMddBytes(idxJson: String, key: String, mddPath: String): ByteArray? {
-        val idx = org.json.JSONObject(idxJson)
+    private fun getMddIdx(name: String): org.json.JSONObject? {
+        synchronized(mddIdxCache) {
+            mddIdxCache[name]?.let { return it }
+            val json = readDictCacheInternal(name + ".idx.json")
+            if (json.isEmpty()) return null
+            return try {
+                org.json.JSONObject(json).also { mddIdxCache[name] = it }
+            } catch (e: Exception) {
+                Log.e(TAG, "Mdd idx parse error: ${e.message}")
+                null
+            }
+        }
+    }
+
+    private fun lookupMddBytes(idx: org.json.JSONObject, key: String, mddPath: String): ByteArray? {
         val keywords = idx.getJSONArray("k")
         val recordInfo = idx.getJSONArray("r")
         val rbs = idx.optLong("rbs", 0)
@@ -718,7 +768,8 @@ class MainActivity : AppCompatActivity() {
         var skipFirst = false
 
         fun extend() {
-            val nb = out.copyOf(cbl + 8192)
+            // Geometric growth: +8KB steps would make decompressing large blocks O(n^2)
+            val nb = out.copyOf(maxOf(cbl + 8192, cbl * 2))
             out = nb
             cbl = nb.size
         }
@@ -1023,6 +1074,7 @@ class MainActivity : AppCompatActivity() {
 
             // STEP 9. save cache + register
             saveDictCacheInternal(fileName + ".idx.json", idxJson)
+            synchronized(mddIdxCache) { mddIdxCache.remove(fileName) }
             val registry = readMddRegistry()
             for (i in registry.length() - 1 downTo 0) {
                 if (registry.getJSONObject(i).optString("name") == fileName) registry.remove(i)
@@ -1062,11 +1114,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun playSoundFromMdd(key: String) {
         Thread {
-            val data = loadMddResource(key) ?: return@Thread
+            val data = loadMddResource(key)
+            if (data == null) {
+                Log.e(TAG, "Sound data null for key=$key")
+                return@Thread
+            }
+            Log.d(TAG, "Sound data ${data.size} bytes for key=$key")
             val tmp = File(cacheDir, "tmp_sound")
             try {
                 tmp.writeBytes(data)
             } catch (e: Exception) {
+                Log.e(TAG, "Sound tmp write error: ${e.message}")
                 return@Thread
             }
             runOnUiThread {
@@ -1080,6 +1138,7 @@ class MainActivity : AppCompatActivity() {
                         }
                         prepare()
                         start()
+                        Log.d(TAG, "Sound playing: ${tmp.absolutePath}")
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Sound play error: ${e.message}")
@@ -1150,6 +1209,63 @@ class MainActivity : AppCompatActivity() {
                 val outFile = File(dir, fileName)
                 FileOutputStream(outFile).use { output ->
                     inputStream.copyTo(output)
+                }
+                inputStream.close()
+                outFile.absolutePath
+            } catch (e: Exception) {
+                Log.e(TAG, "Error saving file: ${e.message}")
+                ""
+            }
+        }
+
+        // Like saveFileToInternal, but skips the copy when an identical file (same name
+        // & size) already exists and reports copy progress via onMddIndexProgress.
+        // Note: no default args here — @JavascriptInterface methods are called via
+        // reflection with exactly the number of JS-supplied arguments.
+        @JavascriptInterface
+        fun saveFileToInternalWithProgress(uriStr: String, fileName: String, requestId: Int): String {
+            return try {
+                val uri = Uri.parse(uriStr)
+                val dir = File(filesDir, "dictionaries")
+                dir.mkdirs()
+                val outFile = File(dir, fileName)
+
+                // Skip the copy when an identical file (same name & size) already exists
+                var knownSize = -1L
+                try {
+                    contentResolver.query(uri, null, null, null, null)?.use { c ->
+                        if (c.moveToFirst()) {
+                            val i = c.getColumnIndex(OpenableColumns.SIZE)
+                            if (i >= 0) knownSize = c.getLong(i)
+                        }
+                    }
+                } catch (e: Exception) {
+                }
+                if (knownSize > 0 && outFile.exists() && outFile.length() == knownSize) {
+                    return outFile.absolutePath
+                }
+
+                val inputStream = contentResolver.openInputStream(uri) ?: return ""
+                var copied = 0L
+                val buf = ByteArray(64 * 1024)
+                var lastPct = -1
+                FileOutputStream(outFile).use { output ->
+                    while (true) {
+                        val n = inputStream.read(buf)
+                        if (n <= 0) break
+                        output.write(buf, 0, n)
+                        copied += n
+                        if (knownSize > 0) {
+                            val pct = (copied * 100 / knownSize).toInt()
+                            if (pct != lastPct) {
+                                lastPct = pct
+                                val p = pct
+                                runOnUiThread {
+                                    webView.evaluateJavascript("window.onMddIndexProgress($requestId, $p, 'copy')", null)
+                                }
+                            }
+                        }
+                    }
                 }
                 inputStream.close()
                 outFile.absolutePath
@@ -1349,6 +1465,9 @@ class MainActivity : AppCompatActivity() {
         fun deleteDictCache(fileName: String) {
             try {
                 File(File(filesDir, "caches"), fileName).delete()
+                if (fileName.endsWith(".idx.json")) {
+                    synchronized(mddIdxCache) { mddIdxCache.remove(fileName.removeSuffix(".idx.json")) }
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Error deleting dict cache: ${e.message}")
             }

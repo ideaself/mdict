@@ -4,6 +4,9 @@ app/build/
 build/
 local.properties
 
+# Release signing key (never commit)
+keystore.properties
+
 # OS files
 .DS_Store
 Thumbs.db
