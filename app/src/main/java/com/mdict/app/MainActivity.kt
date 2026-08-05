@@ -22,7 +22,9 @@ import androidx.activity.OnBackPressedCallback
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.PrintWriter
 import java.io.RandomAccessFile
+import java.io.StringWriter
 import java.nio.charset.Charset
 
 class MainActivity : AppCompatActivity() {
@@ -43,8 +45,34 @@ class MainActivity : AppCompatActivity() {
 
     private var pendingExportContent: String? = null
 
+    // ---- Crash / error logging ----
+    // Uncaught native exceptions and JS errors are appended to filesDir/crash.log
+    // so bugs can be diagnosed from the device without logcat.
+
+    private fun installCrashHandler() {
+        val default = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                val sw = StringWriter()
+                throwable.printStackTrace(PrintWriter(sw))
+                writeErrorLog("KOTLIN", "${thread.name}\n$sw")
+            } catch (e: Exception) {
+            }
+            default?.uncaughtException(thread, throwable)
+        }
+    }
+
+    private fun writeErrorLog(kind: String, content: String) {
+        try {
+            val ts = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+            File(File(filesDir, "caches"), "crash.log").appendText("[$kind] $ts\n$content\n\n")
+        } catch (e: Exception) {
+        }
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
+        installCrashHandler()
         if (isLookupAction(intent?.action)) {
             setTheme(R.style.Theme_MDict_Lookup)
         }
@@ -72,7 +100,11 @@ class MainActivity : AppCompatActivity() {
 
         webView.webChromeClient = object : WebChromeClient() {
             override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
-                Log.d(TAG, "JS: ${consoleMessage?.message()}")
+                val msg = consoleMessage?.message() ?: return true
+                Log.d(TAG, "JS: $msg")
+                if (msg.contains("Uncaught") || msg.contains("Error")) {
+                    writeErrorLog("JS", msg)
+                }
                 return true
             }
         }
